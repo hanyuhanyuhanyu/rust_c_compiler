@@ -5,7 +5,9 @@ assert() {
   input=$1
   expect=$2
   file_name="output_$cnt"
-  cargo run -q $input > .tmp/$file_name.s
+  echo $@
+  echo $1
+  cargo run -q "$input" > .tmp/$file_name.s
   cc -z noexecstack -o .tmp/$file_name .tmp/$file_name.s
   .tmp/$file_name
   actual="$?"
@@ -19,8 +21,8 @@ assert() {
 SCRIPTDIR="$( cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )"
 cd $SCRIPTDIR
 rm .tmp/* -f
-while IFS= read -r i; do 
-  assert $i
+while read -r line; do 
+  eval "assert $line"
 done < test
 rm .tmp/* -f
 echo OK

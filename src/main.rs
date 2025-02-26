@@ -20,6 +20,7 @@ fn build_calc_lines(nums: Vec<i32>, opes: Vec<char>, space_count: usize) -> Stri
 }
 fn main() {
     let args: Vec<String> = env::args().collect();
+
     if args.len() < 2 {
         println!("no arg given");
         return;
@@ -38,10 +39,7 @@ fn main() {
                 nums.push(buffer);
                 opes.push(c);
             }
-            _ => {
-                println!("unexpected char: {}", c);
-                return;
-            }
+            _ => continue,
         }
         buffer = 0;
     }
