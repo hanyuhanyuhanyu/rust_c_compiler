@@ -2,5 +2,14 @@
 name = "ccm"
 version = "0.1.0"
 edition = "2024"
+default-run="main"
 
 [dependencies]
+
+[[bin]]
+name="main"
+path="src/main.rs"
+
+[[bin]]
+name="dev"
+path="src/dev.rs"

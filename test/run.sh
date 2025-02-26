@@ -5,8 +5,6 @@ assert() {
   input=$1
   expect=$2
   file_name="output_$cnt"
-  echo $@
-  echo $1
   cargo run -q "$input" > .tmp/$file_name.s
   cc -z noexecstack -o .tmp/$file_name .tmp/$file_name.s
   .tmp/$file_name
