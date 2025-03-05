@@ -14,9 +14,10 @@ fn main() {
 .globl main
 main:
 {}
+    pop rax
     ret
         ",
-        token::token::compile_from_raw(raw_stmt, 4).join("\n")
+        token::token::compile(raw_stmt).join("\n")
     );
     return;
 }

@@ -1,7 +1,4 @@
 mod token;
 fn main() {
-    println!(
-        "{:?}",
-        token::token::compile_from_raw("6 -1  + 3".into(), 4)
-    );
+    token::token::compile(" ( (3 / (4-3)) * (  5+ 6 * 7 ) ) ".into());
 }
