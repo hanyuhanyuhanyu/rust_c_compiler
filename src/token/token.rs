@@ -138,7 +138,7 @@ impl Consuming {
             if ope == "mul" {
                 self.push("imul rax, rdi".into());
             } else if ope == "div" {
-                self.push("cqu".into());
+                self.push("cqo".into());
                 self.push("idiv rax, rdi".into());
             }
             self.push("push rax".into())
