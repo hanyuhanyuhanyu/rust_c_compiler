@@ -36,6 +36,18 @@ impl Consuming {
             }
         }
     }
+    fn try_eat(&mut self, str: &str) -> bool {
+        self.space();
+        let max = self.index + str.len();
+        if self.input.len() <= max {
+            return false;
+        }
+        if &self.input[self.index..max] == str {
+            self.index += str.len();
+            return true;
+        }
+        false
+    }
     fn push(&mut self, str: String) {
         self.queue
             .push(format!("{}{}", " ".repeat(self.tab_index), str));
@@ -177,7 +189,7 @@ impl Consuming {
         }
         None
     }
-    pub fn expr(&mut self) -> ConsumeResult {
+    fn add(&mut self) -> ConsumeResult {
         let first = self.mul();
         if first.is_some() {
             return first;
@@ -209,6 +221,99 @@ impl Consuming {
             self.push("push rax".into());
         }
         return first;
+    }
+    fn relational(&mut self) -> ConsumeResult {
+        let first = self.add();
+        if first.is_some() {
+            return first;
+        }
+        loop {
+            if self.try_eat("<=") {
+                let later = self.add();
+                if later.is_some() {
+                    return later;
+                }
+                self.push("pop rdi".into());
+                self.push("pop rax".into());
+                self.push("cmp rax, rdi".into());
+                self.push("setle al".into());
+                self.push("movzb rax, al".into());
+                self.push("push rax".into());
+            } else if self.try_eat(">=") {
+                let later = self.add();
+                if later.is_some() {
+                    return later;
+                }
+                self.push("pop rdi".into());
+                self.push("pop rax".into());
+                self.push("cmp rdi, rax".into());
+                self.push("setle al".into());
+                self.push("movzb rax, al".into());
+                self.push("push rax".into());
+            } else if self.try_eat("<") {
+                let later = self.add();
+                if later.is_some() {
+                    return later;
+                }
+                self.push("pop rdi".into());
+                self.push("pop rax".into());
+                self.push("cmp rax, rdi".into());
+                self.push("setl al".into());
+                self.push("movzb rax, al".into());
+                self.push("push rax".into());
+            } else if self.try_eat(">") {
+                let later = self.add();
+                if later.is_some() {
+                    return later;
+                }
+                self.push("pop rdi".into());
+                self.push("pop rax".into());
+                self.push("cmp rdi, rax".into());
+                self.push("setl al".into());
+                self.push("movzb rax, al".into());
+                self.push("push rax".into());
+            } else {
+                break;
+            }
+        }
+        None
+    }
+    fn equality(&mut self) -> ConsumeResult {
+        let first = self.relational();
+        if first.is_some() {
+            return first;
+        }
+        loop {
+            if self.try_eat("==") {
+                let later = self.relational();
+                if later.is_some() {
+                    return later;
+                }
+                self.push("pop rdi".into());
+                self.push("pop rax".into());
+                self.push("cmp rax, rdi".into());
+                self.push("sete al".into());
+                self.push("movzb rax, al".into());
+                self.push("push rax".into());
+            } else if self.try_eat("!=") {
+                let later = self.relational();
+                if later.is_some() {
+                    return later;
+                }
+                self.push("pop rdi".into());
+                self.push("pop rax".into());
+                self.push("cmp rax, rdi".into());
+                self.push("setne al".into());
+                self.push("movzb rax, al".into());
+                self.push("push rax".into());
+            } else {
+                break;
+            }
+        }
+        None
+    }
+    pub fn expr(&mut self) -> ConsumeResult {
+        self.equality()
     }
 }
 pub fn compile(input: String) -> Vec<String> {

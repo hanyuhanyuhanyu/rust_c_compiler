@@ -10,9 +10,9 @@ assert() {
   .tmp/$file_name
   actual="$?"
   if [ "$actual" = "$expect" ]; then
-    echo "$input => $actual"
+    echo "($cnt) $input => $actual"
   else
-    echo "$input => $expect expected, but got $actual"
+    echo "($cnt) $input => $expect expected, but got $actual"
   fi
 }
 SCRIPTDIR="$( cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )"
