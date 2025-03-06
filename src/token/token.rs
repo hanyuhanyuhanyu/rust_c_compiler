@@ -19,6 +19,9 @@ impl Consuming {
         self.index += 1;
         char
     }
+    fn wind(&mut self) {
+        self.index -= 1;
+    }
     fn seek(&mut self, checker: fn(check: char) -> bool) -> Option<char> {
         self.space();
         match self.input.chars().nth(self.index) {
@@ -43,13 +46,12 @@ impl Consuming {
                 Some(' ') => {
                     self.index += 1;
                 }
-                None => break,
                 _ => break,
             }
         }
     }
-    fn num(&mut self, initial: char) -> ConsumeResult {
-        let mut number: String = initial.into();
+    fn num(&mut self) -> ConsumeResult {
+        let mut number: String = "".into();
         loop {
             match self.seek(|c: char| -> bool { c.is_numeric() }) {
                 None => break,
@@ -83,7 +85,8 @@ impl Consuming {
             }
             Some(c) => {
                 if c.is_numeric() {
-                    return self.num(c);
+                    self.wind();
+                    return self.num();
                 }
                 if c != '(' {
                     return Some(ConsumeFailure {
@@ -111,8 +114,37 @@ impl Consuming {
             }),
         }
     }
+    fn unary(&mut self) -> ConsumeResult {
+        match self.eat_one() {
+            None => {
+                return Some(ConsumeFailure {
+                    index: self.index,
+                    reason: UNEXPECTED_FAIL.into(),
+                });
+            }
+            Some('+') => {
+                return self.primary();
+            }
+            Some('-') => {
+                self.push(format!("push {}", 0));
+                let res = self.primary();
+                if res.is_some() {
+                    return res;
+                }
+                self.push("pop rdi".into());
+                self.push("pop rax".into());
+                self.push("sub rax, rdi".into());
+                self.push("push rax".into());
+                None
+            }
+            _ => {
+                self.wind();
+                return self.primary();
+            }
+        }
+    }
     fn mul(&mut self) -> ConsumeResult {
-        let first = self.primary();
+        let first = self.unary();
         if first.is_some() {
             return first;
         }
@@ -129,7 +161,7 @@ impl Consuming {
             if ope.is_empty() {
                 break;
             }
-            let next = self.primary();
+            let next = self.unary();
             if next.is_some() {
                 return next;
             }
