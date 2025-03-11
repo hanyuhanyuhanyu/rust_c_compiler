@@ -1,6 +1,5 @@
 use super::node::{
-    Add, AddSub, Compare, Equality, Equals, Expr, Mul, MulDiv, Node, Num, Primary, Relational,
-    Unary,
+    Add, AddSub, Compare, Equality, Equals, Expr, Mul, MulDiv, Node, Primary, Relational, Unary,
 };
 struct Generator {
     nodes: Vec<Box<dyn Node>>,
@@ -149,7 +148,7 @@ fn relational(rel: &Relational) -> GenResult {
     }
     return Ok(lines);
 }
-fn equality(eq: Equality) -> GenResult {
+fn equality(eq: &Equality) -> GenResult {
     let first = relational(&eq.first);
     if first.is_err() {
         return first;
@@ -182,5 +181,5 @@ fn equality(eq: Equality) -> GenResult {
 }
 
 fn generate(expr: &Expr) -> GenResult {
-    equality(expr.node)
+    equality(&expr.node)
 }
