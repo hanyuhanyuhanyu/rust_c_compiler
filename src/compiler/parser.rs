@@ -1,5 +1,6 @@
 use super::node::{
-    Add, AddSub, Compare, Equality, Equals, Expr, Mul, MulDiv, Num, Primary, Relational, Unary,
+    Add, AddSub, Assign, Compare, Equality, Equals, Expr, Mul, MulDiv, Num, Primary, Program,
+    Relational, Stmt, Unary,
 };
 
 #[derive(Debug)]
@@ -259,10 +260,57 @@ impl Parser<'_> {
         }
         Ok(eq)
     }
-    pub fn expr(&mut self) -> ParseResult<Expr> {
-        match self.equality() {
-            Ok(e) => Ok(Expr { node: e }),
+    fn assign(&mut self) -> ParseResult<Assign> {
+        let eq = self.equality();
+        if eq.is_err() {
+            return Err(eq.unwrap_err());
+        }
+        if !self.consume("=") {
+            return Ok(Assign {
+                equality: eq.unwrap(),
+                assign: None,
+            });
+        }
+        match self.assign() {
+            Ok(a) => Ok(Assign {
+                equality: eq.unwrap(),
+                assign: Some(Box::new(a)),
+            }),
             Err(e) => Err(e),
         }
+    }
+    pub fn expr(&mut self) -> ParseResult<Expr> {
+        match self.assign() {
+            Ok(a) => Ok(Expr { assign: a }),
+            Err(e) => Err(e),
+        }
+    }
+    fn stmt(&mut self) -> ParseResult<Stmt> {
+        let stmt = match self.expr() {
+            Ok(e) => Ok(Stmt { expr: e }),
+            Err(e) => Err(e),
+        };
+        if stmt.is_err() {
+            return stmt;
+        }
+        if self.consume(";") {
+            return Err(self.fail("; expected".into()));
+        }
+        return stmt;
+    }
+    fn program(&mut self) -> ParseResult<Program> {
+        let mut stmts = Vec::new();
+        loop {
+            if self.empty() {
+                break;
+            }
+            match self.stmt() {
+                Ok(s) => {
+                    stmts.push(s);
+                }
+                Err(s) => return Err(s),
+            }
+        }
+        Ok(Program { stmt: stmts })
     }
 }

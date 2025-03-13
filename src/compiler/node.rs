@@ -21,8 +21,22 @@ pub enum Equals {
     NotEqual,
 }
 #[derive(Debug)]
+pub struct Program {
+    pub stmt: Vec<Stmt>,
+}
+
+#[derive(Debug)]
+pub struct Stmt {
+    pub expr: Expr,
+}
+#[derive(Debug)]
 pub struct Expr {
-    pub node: Equality,
+    pub assign: Assign,
+}
+#[derive(Debug)]
+pub struct Assign {
+    pub equality: Equality,
+    pub assign: Option<Box<Assign>>,
 }
 #[derive(Debug)]
 pub struct Equality {
