@@ -1,5 +1,5 @@
 use std::env;
-mod token;
+mod compiler;
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -17,7 +17,11 @@ main:
     pop rax
     ret
         ",
-        token::token::compile(raw_stmt).join("\n")
+        compiler::compiler::compile(raw_stmt)
+            .iter()
+            .map(|a| format!("    {}", a))
+            .collect::<Vec<String>>()
+            .join("\n")
     );
     return;
 }

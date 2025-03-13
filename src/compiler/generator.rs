@@ -1,10 +1,6 @@
 use super::node::{
-    Add, AddSub, Compare, Equality, Equals, Expr, Mul, MulDiv, Node, Primary, Relational, Unary,
+    Add, AddSub, Compare, Equality, Equals, Expr, Mul, MulDiv, Primary, Relational, Unary,
 };
-struct Generator {
-    nodes: Vec<Box<dyn Node>>,
-    index: usize,
-}
 type GenResult = Result<Vec<String>, Vec<String>>;
 fn primary(m: &Primary) -> GenResult {
     let num = m.num.as_ref();
@@ -136,7 +132,7 @@ fn relational(rel: &Relational) -> GenResult {
             }
             Compare::Gt => {
                 lines.push("cmp rdi, rax".into());
-                lines.push("setle al".into());
+                lines.push("setl al".into());
             }
             Compare::Gte => {
                 lines.push("cmp rdi, rax".into());
@@ -180,6 +176,6 @@ fn equality(eq: &Equality) -> GenResult {
     return Ok(lines);
 }
 
-fn generate(expr: &Expr) -> GenResult {
+pub fn generate(expr: &Expr) -> GenResult {
     equality(&expr.node)
 }

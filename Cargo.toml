@@ -11,5 +11,5 @@ name="main"
 path="src/main.rs"
 
 [[bin]]
-name="dev"
-path="src/dev.rs"
+name="test"
+path="src/test.rs"
