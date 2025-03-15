@@ -1,3 +1,5 @@
 /target
 *.local
-*.tmp
+*.tmp*
+test_*
+!test_files

@@ -1,5 +1,7 @@
 CFLAGS=-std=c11 -g -static
-.PHONY: test
+.PHONY: t subt
 TESTDIR = test
-test: 
+t: 
 	sh ./test/run.sh
+subt: 
+	sh ./test/run.sh sub

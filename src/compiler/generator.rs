@@ -1,30 +1,52 @@
 use super::node::{
-    Add, AddSub, Compare, Equality, Equals, Expr, Mul, MulDiv, Primary, Relational, Unary,
+    Add, AddSub, Assign, Compare, Equality, Equals, Expr, Lvar, Mul, MulDiv, Primary, PrimaryNode,
+    Program, Relational, Stmt, Unary,
 };
 type GenResult = Result<Vec<String>, Vec<String>>;
+fn concat(l: GenResult, r: GenResult) -> GenResult {
+    if l.is_err() {
+        return l;
+    }
+    if r.is_err() {
+        return r;
+    }
+    let ll = l.unwrap();
+    let rl = r.unwrap();
+    Ok([ll, rl].concat())
+}
+fn concat_multi(results: &[GenResult]) -> GenResult {
+    let mut base = Ok(Vec::new());
+    for r in results {
+        base = concat(base, r.clone());
+        if base.is_err() {
+            break;
+        }
+    }
+    return base;
+}
+const NOT_LVAR_ERR: &str = "left value cannot assingable";
 fn primary(m: &Primary) -> GenResult {
-    let num = m.num.as_ref();
-    if num.is_some() {
-        return Ok(vec![format!("push {}", num.unwrap().raw_num)]);
+    match &m.node {
+        PrimaryNode::Num(n) => Ok(vec![format!("push {}", n)]),
+        PrimaryNode::Expr(e) => expr(&e),
+        PrimaryNode::Lv(Lvar::Id(i)) => Ok(vec![
+            "mov rax, rbp".into(),
+            format!("sub rax, {}", i.offset),
+            "push [rax]".into(),
+        ]),
     }
-    let expr = m.exp.as_ref();
-    if expr.is_none() {
-        return Err(vec!["number or expression expected".into()]);
-    }
-    generate(expr.unwrap())
 }
 fn unary(u: &Unary) -> GenResult {
-    match u.node.ope {
+    match u.prim.ope {
         None | Some(AddSub::Plus) => {
-            return primary(&u.node);
+            return primary(&u.prim);
         }
         _ => {
-            let prim = primary(&u.node);
+            let prim = primary(&u.prim);
             if prim.is_err() {
                 return prim;
             }
-            let mut lines = vec![format!("push {}", 0)];
-            lines.append(prim.unwrap().as_mut());
+            let mut lines = [vec![format!("push {}", 0)], prim.unwrap()].concat();
             lines.push("pop rdi".into());
             lines.push("pop rax".into());
             lines.push("sub rax, rdi".into());
@@ -50,11 +72,10 @@ fn mul(m: &Mul) -> GenResult {
         if second.is_err() {
             return second;
         }
-        let ope = u.ope.as_ref().unwrap();
-        lines.append(second.unwrap().as_mut());
+        lines.extend(second.unwrap());
         lines.push("pop rdi".into());
         lines.push("pop rax".into());
-        match ope {
+        match u.ope.as_ref().unwrap() {
             MulDiv::Multi => {
                 lines.push("imul rax,rdi".into());
             }
@@ -84,16 +105,15 @@ fn add(a: &Add) -> GenResult {
         if second.is_err() {
             return second;
         }
-        let ope = m.ope.as_ref().unwrap();
-        lines.append(second.unwrap().as_mut());
+        lines.extend(second.unwrap());
         lines.push("pop rdi".into());
         lines.push("pop rax".into());
-        match ope {
+        match m.ope.as_ref().unwrap() {
             AddSub::Plus => {
-                lines.push("add rax,rdi".into());
+                lines.push("add rax, rdi".into());
             }
             AddSub::Minus => {
-                lines.push("sub rax,rdi".into());
+                lines.push("sub rax, rdi".into());
             }
         }
         lines.push("push rax".into());
@@ -117,11 +137,10 @@ fn relational(rel: &Relational) -> GenResult {
         if second.is_err() {
             return second;
         }
-        let ope = a.ope.as_ref().unwrap();
-        lines.append(second.unwrap().as_mut());
+        lines.extend(second.unwrap());
         lines.push("pop rdi".into());
         lines.push("pop rax".into());
-        match ope {
+        match a.ope.as_ref().unwrap() {
             Compare::Lt => {
                 lines.push("cmp rax, rdi".into());
                 lines.push("setl al".into());
@@ -176,6 +195,82 @@ fn equality(eq: &Equality) -> GenResult {
     return Ok(lines);
 }
 
-pub fn generate(expr: &Expr) -> GenResult {
-    equality(&expr.node)
+fn lvar(e: &Lvar) -> GenResult {
+    match e {
+        Lvar::Id(i) => Ok(vec![
+            "mov rax, rbp".into(),
+            format!("sub rax, {}", i.offset),
+            "push rax".into(),
+        ]),
+    }
+}
+fn assign(a: &Assign) -> GenResult {
+    if a.rvar.is_none() {
+        return equality(&a.lvar);
+    }
+    match a.lvar.lvar() {
+        None => Err(vec![NOT_LVAR_ERR.into()]),
+        Some(l) => {
+            let l = lvar(l);
+            let r = assign(a.rvar.as_ref().unwrap());
+            let lines = concat(l, r);
+            match lines {
+                Err(e) => Err(e),
+                Ok(ls) => Ok([
+                    ls,
+                    vec![
+                        "pop rdi".into(),
+                        "pop rax".into(),
+                        "mov [rax], rdi".into(),
+                        "push rdi".into(),
+                    ],
+                ]
+                .concat()),
+            }
+        }
+    }
+}
+fn expr(e: &Expr) -> GenResult {
+    assign(&e.assign)
+}
+fn stmt(s: &Stmt) -> GenResult {
+    expr(&s.expr)
+}
+fn program(p: &Program) -> GenResult {
+    let mut lines = Vec::new();
+    for s in p.stmt.iter() {
+        match stmt(s) {
+            Ok(mut l) => {
+                lines.append(&mut l);
+            }
+            Err(e) => {
+                return Err(e);
+            }
+        };
+        // 違う。exprの中でepilogueを呼ぶべき
+        // まあ制御構文に手を出すあたりで死ぬはずなのでその時に苦しもう
+        if s.expr.ret {
+            return Ok(lines);
+        }
+    }
+    Ok(lines)
+}
+fn prologue(p: &Program) -> GenResult {
+    Ok(vec![
+        "push rbp #prlg ->".into(),
+        "mov rbp, rsp".into(),
+        format!("sub rsp, {} {}", p.required_memory, "#<- prlg"),
+    ])
+}
+fn epilogue() -> GenResult {
+    Ok(vec![
+        "pop rax #eplg ->".into(),
+        "mov rsp, rbp".into(),
+        "pop rbp".into(),
+        "ret".into(),
+        "push rax #<- eplg".into(),
+    ])
+}
+pub fn generate(p: &Program) -> GenResult {
+    concat_multi(&[prologue(p), program(p), epilogue()])
 }

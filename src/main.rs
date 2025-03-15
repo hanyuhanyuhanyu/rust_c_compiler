@@ -16,7 +16,7 @@ main:
 {}
     pop rax
     ret
-        ",
+",
         compiler::compiler::compile(raw_stmt)
             .iter()
             .map(|a| format!("    {}", a))
