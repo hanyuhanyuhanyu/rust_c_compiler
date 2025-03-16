@@ -262,7 +262,6 @@ impl Generator<'_> {
         Ok([
             init,
             vec![start_label.clone() + ":"],
-            step,
             cond,
             vec![
                 "pop rax".into(),
@@ -270,6 +269,7 @@ impl Generator<'_> {
                 "je ".to_string() + &end_label,
             ],
             stmt,
+            step,
             vec!["jmp ".to_string() + &start_label, end_label + ":"],
         ]
         .concat())
