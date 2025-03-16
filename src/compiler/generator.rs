@@ -330,6 +330,12 @@ impl Generator<'_> {
             Statement::If(i) => self.if_(i),
             Statement::While(w) => self.while_(w),
             Statement::For(f) => self.for_(f),
+            Statement::MStmt(ms) => ms
+                .stmts
+                .iter()
+                .map(|f| self.stmt(f))
+                .reduce(|a, b| concat(a, b))
+                .unwrap_or(Ok(vec![])),
             Statement::Stmt(s) => {
                 let lines = self.expr(&s.expr)?;
                 if s.expr.ret {

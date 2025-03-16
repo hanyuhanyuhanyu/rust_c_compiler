@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::node::{
     Add, AddSub, Assign, Compare, Equality, Equals, Expr, For, Ident, If, Lvar, Mul, MulDiv,
-    Primary, PrimaryNode, Program, Relational, Statement, Stmt, Unary, While,
+    MultiStmt, Primary, PrimaryNode, Program, Relational, Statement, Stmt, Unary, While,
 };
 const IDENTITY_OFFSET: usize = 8;
 const RETURN: &str = "return";
@@ -88,7 +88,7 @@ impl Parser<'_> {
             }
         }
     }
-    fn is_top(&mut self, var: &str) -> bool {
+    fn watch_top(&mut self, var: &str) -> bool {
         self.space();
         self.input
             .chars()
@@ -432,7 +432,7 @@ impl Parser<'_> {
         if !self.consume("(") {
             return Err(self.fail("( expected before 'for'".into()));
         }
-        let init = if self.is_top(";") {
+        let init = if self.watch_top(";") {
             None
         } else {
             Some(self.expr()?)
@@ -440,7 +440,7 @@ impl Parser<'_> {
         if !self.consume(";") {
             return Err(self.fail("; expected after for initialize section".into()));
         }
-        let cond = if self.is_top(";") {
+        let cond = if self.watch_top(";") {
             None
         } else {
             Some(self.expr()?)
@@ -448,7 +448,7 @@ impl Parser<'_> {
         if !self.consume(";") {
             return Err(self.fail("; expected after for condition section".into()));
         }
-        let step = if self.is_top(")") {
+        let step = if self.watch_top(")") {
             None
         } else {
             Some(self.expr()?)
@@ -486,6 +486,19 @@ impl Parser<'_> {
             })
         }
     }
+    fn multi_stmts(&mut self) -> ParseResult<MultiStmt> {
+        let mut stmts = Vec::new();
+        loop {
+            if self.watch_top("}") || self.empty() {
+                break;
+            };
+            stmts.push(self.stmt()?);
+        }
+        if !self.consume("}") {
+            return Err(self.fail("bracket not balanced".into()));
+        }
+        Ok(MultiStmt { stmts: stmts })
+    }
     fn stmt(&mut self) -> ParseResult<Statement> {
         if self.try_consume_top("if") {
             return Ok(Statement::If(self.if_()?));
@@ -495,6 +508,9 @@ impl Parser<'_> {
         }
         if self.try_consume_top("while") {
             return Ok(Statement::While(self.while_()?));
+        }
+        if self.try_consume_top("{") {
+            return Ok(Statement::MStmt(self.multi_stmts()?));
         }
         let expr = self.expr()?;
         if !self.consume(";") {

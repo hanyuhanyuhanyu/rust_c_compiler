@@ -14,8 +14,6 @@ fn main() {
 .globl main
 main:
 {}
-    pop rax
-    ret
 ",
         compiler::compiler::compile(raw_stmt)
             .iter()

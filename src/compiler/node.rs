@@ -45,15 +45,20 @@ pub struct While {
     pub stmt: Box<Statement>,
 }
 #[derive(Debug)]
+pub struct Stmt {
+    pub expr: Expr,
+}
+#[derive(Debug)]
+pub struct MultiStmt {
+    pub stmts: Vec<Statement>,
+}
+#[derive(Debug)]
 pub enum Statement {
     If(If),
     For(For),
     While(While),
     Stmt(Stmt),
-}
-#[derive(Debug)]
-pub struct Stmt {
-    pub expr: Expr,
+    MStmt(MultiStmt),
 }
 #[derive(Debug)]
 pub struct Expr {
