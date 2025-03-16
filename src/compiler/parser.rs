@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use super::node::{
-    Add, AddSub, Assign, Compare, Equality, Equals, Expr, Ident, If, Lvar, Mul, MulDiv, Primary,
-    PrimaryNode, Program, Relational, Statement, Stmt, Unary, While,
+    Add, AddSub, Assign, Compare, Equality, Equals, Expr, For, Ident, If, Lvar, Mul, MulDiv,
+    Primary, PrimaryNode, Program, Relational, Statement, Stmt, Unary, While,
 };
 const IDENTITY_OFFSET: usize = 8;
 const RETURN: &str = "return";
@@ -10,6 +10,8 @@ const RETURN: &str = "return";
 #[derive(Debug)]
 pub struct ParseFailure {
     pub index: usize,
+    pub read_line: usize,
+    pub source: Option<String>,
     pub reason: String,
 }
 pub type ParseResult<T> = Result<T, ParseFailure>;
@@ -19,6 +21,8 @@ pub struct Parser<'a> {
     pub input: &'a String,
     pub ident_count: usize,
     pub idents: HashMap<String, usize>,
+    pub read_lines: usize,
+    pub line_index: usize,
 }
 trait IsToken {
     fn is_token_parts(self) -> bool;
@@ -29,6 +33,10 @@ impl IsToken for char {
     }
 }
 impl Parser<'_> {
+    fn succ(&mut self, count: usize) {
+        self.index += count;
+        self.line_index += count;
+    }
     fn consume(&mut self, str: &str) -> bool {
         self.space();
         if self
@@ -38,7 +46,7 @@ impl Parser<'_> {
             .take(str.len())
             .eq(str.chars())
         {
-            self.index += str.len();
+            self.succ(str.len());
             return true;
         }
         false
@@ -48,8 +56,14 @@ impl Parser<'_> {
         self.index == self.input.len()
     }
     fn fail(&self, reason: String) -> ParseFailure {
+        let line = match self.input.split('\n').nth(self.read_lines) {
+            Some(str) => Some(str.into()),
+            _ => None,
+        };
         ParseFailure {
-            index: self.index,
+            index: self.line_index,
+            read_line: self.read_lines,
+            source: line,
             reason: reason,
         }
     }
@@ -66,7 +80,7 @@ impl Parser<'_> {
             None => None,
             Some(c) => {
                 if checker(c) {
-                    self.index += 1;
+                    self.succ(1);
                     Some(c)
                 } else {
                     None
@@ -75,6 +89,14 @@ impl Parser<'_> {
         }
     }
     fn is_top(&mut self, var: &str) -> bool {
+        self.space();
+        self.input
+            .chars()
+            .skip(self.index)
+            .take(var.len())
+            .eq(var.chars())
+    }
+    fn try_consume_top(&mut self, var: &str) -> bool {
         self.space();
         if !self
             .input
@@ -91,7 +113,7 @@ impl Parser<'_> {
                 if c.is_token_parts() {
                     return false;
                 }
-                self.index += var.len();
+                self.succ(var.len());
                 true
             }
         }
@@ -115,9 +137,26 @@ impl Parser<'_> {
 
     fn space(&mut self) {
         loop {
+            if self
+                .input
+                .chars()
+                .skip(self.index)
+                .take(2)
+                .eq("\r\n".chars())
+            {
+                self.read_lines += 1;
+                self.succ(2);
+                self.line_index = 0;
+                continue;
+            }
             match self.input.chars().nth(self.index) {
-                Some(' ') | Some('\r') | Some('\n') => {
-                    self.index += 1;
+                Some(' ') => {
+                    self.succ(1);
+                }
+                Some('\r') | Some('\n') => {
+                    self.read_lines += 1;
+                    self.succ(1);
+                    self.line_index = 0;
                 }
                 _ => break,
             }
@@ -159,7 +198,10 @@ impl Parser<'_> {
     }
     fn p_ident(&mut self, ope: Option<AddSub>) -> ParseResult<Primary> {
         match self.extract(|c| c.is_token_parts()) {
-            None => Err(self.fail("identity can only contain 'a-z', 'A-Z', '0-9' and '_'".into())),
+            None => Err(self.fail(
+                "identity expected, but identity can only contain 'a-z', 'A-Z', '0-9' and '_'"
+                    .into(),
+            )),
 
             Some(i) => {
                 let offset = match self.idents.get(&i) {
@@ -363,7 +405,7 @@ impl Parser<'_> {
         }
     }
     fn expr(&mut self) -> ParseResult<Expr> {
-        let ret = self.is_top(RETURN);
+        let ret = self.try_consume_top(RETURN);
         match self.assign() {
             Ok(a) => Ok(Expr {
                 assign: a,
@@ -386,15 +428,41 @@ impl Parser<'_> {
             stmt: Box::new(stmt),
         })
     }
-    // fn for_(&mut self) -> ParseResult<For> {
-    //     if !self.consume("(") {
-    //         return Err(self.fail("( expected before 'if'".into()));
-    //     }
-    //     let cond = self.expr()?;
-    //     if !self.consume(")") {
-    //         return Err(self.fail(") expected after 'if'".into()));
-    //     }
-    // }
+    fn for_(&mut self) -> ParseResult<For> {
+        if !self.consume("(") {
+            return Err(self.fail("( expected before 'for'".into()));
+        }
+        let init = if self.is_top(";") {
+            None
+        } else {
+            Some(self.expr()?)
+        };
+        if !self.consume(";") {
+            return Err(self.fail("; expected after for initialize section".into()));
+        }
+        let cond = if self.is_top(";") {
+            None
+        } else {
+            Some(self.expr()?)
+        };
+        if !self.consume(";") {
+            return Err(self.fail("; expected after for condition section".into()));
+        }
+        let step = if self.is_top(")") {
+            None
+        } else {
+            Some(self.expr()?)
+        };
+        if !self.consume(")") {
+            return Err(self.fail(") expected after 'for'".into()));
+        }
+        Ok(For {
+            init: init,
+            cond: cond,
+            step: step,
+            stmt: Box::new(self.stmt()?),
+        })
+    }
     fn if_(&mut self) -> ParseResult<If> {
         if !self.consume("(") {
             return Err(self.fail("( expected before 'if'".into()));
@@ -419,13 +487,13 @@ impl Parser<'_> {
         }
     }
     fn stmt(&mut self) -> ParseResult<Statement> {
-        if self.is_top("if") {
+        if self.try_consume_top("if") {
             return Ok(Statement::If(self.if_()?));
         }
-        // if self.is_top("for") {
-        //     return Ok(Statement::For(self.for_()?));
-        // }
-        if self.is_top("while") {
+        if self.try_consume_top("for") {
+            return Ok(Statement::For(self.for_()?));
+        }
+        if self.try_consume_top("while") {
             return Ok(Statement::While(self.while_()?));
         }
         let expr = self.expr()?;
@@ -452,7 +520,18 @@ impl Parser<'_> {
             required_memory: self.ident_count * IDENTITY_OFFSET,
         })
     }
-    pub fn parse(&mut self) -> ParseResult<Program> {
+    fn parse(&mut self) -> ParseResult<Program> {
         self.program()
     }
+}
+pub fn parse(input: &String) -> ParseResult<Program> {
+    Parser {
+        input: input,
+        index: 0,
+        ident_count: 0,
+        line_index: 0,
+        idents: HashMap::new(),
+        read_lines: 0,
+    }
+    .parse()
 }

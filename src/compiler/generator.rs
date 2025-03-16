@@ -1,5 +1,5 @@
 use super::node::{
-    Add, AddSub, Assign, Compare, Equality, Equals, Expr, If, Lvar, Mul, MulDiv, Primary,
+    Add, AddSub, Assign, Compare, Equality, Equals, Expr, For, If, Lvar, Mul, MulDiv, Primary,
     PrimaryNode, Program, Relational, Statement, Unary, While,
 };
 type GenResult = Result<Vec<String>, Vec<String>>;
@@ -243,6 +243,37 @@ impl Generator<'_> {
     fn expr(&mut self, e: &Expr) -> GenResult {
         self.assign(&e.assign)
     }
+    fn for_(&mut self, f: &For) -> GenResult {
+        let init = match &f.init {
+            None => vec![],
+            Some(e) => self.expr(e)?,
+        };
+        let cond = match &f.cond {
+            None => vec![],
+            Some(e) => self.expr(e)?,
+        };
+        let step = match &f.step {
+            None => vec![],
+            Some(e) => self.expr(e)?,
+        };
+        let stmt = self.stmt(&f.stmt)?;
+        let start_label = format!(".ForStart{}", self.jump_label());
+        let end_label = format!(".EndStart{}", self.jump_label());
+        Ok([
+            init,
+            vec![start_label.clone() + ":"],
+            step,
+            cond,
+            vec![
+                "pop rax".into(),
+                "cmp rax, 0".into(),
+                "je ".to_string() + &end_label,
+            ],
+            stmt,
+            vec!["jmp ".to_string() + &start_label, end_label + ":"],
+        ]
+        .concat())
+    }
     fn while_(&mut self, w: &While) -> GenResult {
         let cond = self.expr(&w.cond)?;
         let start_label = format!(".WhileStart{}", self.jump_label());
@@ -298,6 +329,7 @@ impl Generator<'_> {
         match stmt {
             Statement::If(i) => self.if_(i),
             Statement::While(w) => self.while_(w),
+            Statement::For(f) => self.for_(f),
             Statement::Stmt(s) => {
                 let lines = self.expr(&s.expr)?;
                 if s.expr.ret {

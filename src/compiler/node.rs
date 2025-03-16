@@ -32,10 +32,13 @@ pub struct If {
     pub stmt: Box<Statement>,
     pub else_: Option<Box<Statement>>,
 }
-// #[derive(Debug)]
-// pub struct For {
-//     pub expr: Expr,
-// }
+#[derive(Debug)]
+pub struct For {
+    pub init: Option<Expr>,
+    pub cond: Option<Expr>,
+    pub step: Option<Expr>,
+    pub stmt: Box<Statement>,
+}
 #[derive(Debug)]
 pub struct While {
     pub cond: Expr,
@@ -44,7 +47,7 @@ pub struct While {
 #[derive(Debug)]
 pub enum Statement {
     If(If),
-    // For(For),
+    For(For),
     While(While),
     Stmt(Stmt),
 }

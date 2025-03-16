@@ -1,21 +1,14 @@
-use std::collections::HashMap;
-
-use super::{generator::generate, parser::Parser};
+use super::{generator::generate, parser::parse};
 pub fn compile(input: String) -> Vec<String> {
-    let parsed = Parser {
-        index: 0,
-        input: &input,
-        ident_count: 0,
-        idents: HashMap::new(),
-    }
-    .parse();
+    let parsed = parse(&input);
     if parsed.is_err() {
         let err_msg = parsed.unwrap_err();
         panic!(
-            "{}\n{}\n{}^",
+            "{}\nat line {}\n    {}\n{}^ something wrong here",
             err_msg.reason,
-            input,
-            " ".repeat(err_msg.index)
+            err_msg.read_line + 1,
+            err_msg.source.unwrap_or("no original source given".into()),
+            "    ".to_string() + &" ".repeat(err_msg.index)
         )
     }
     match generate(&parsed.unwrap()) {
