@@ -1,6 +1,6 @@
 use super::node::{
-    Add, AddSub, Assign, Compare, Equality, Equals, Expr, Lvar, Mul, MulDiv, Primary, PrimaryNode,
-    Program, Relational, Stmt, Unary,
+    Add, AddSub, Assign, Compare, Equality, Equals, Expr, If, Lvar, Mul, MulDiv, Primary,
+    PrimaryNode, Program, Relational, Statement, Unary,
 };
 type GenResult = Result<Vec<String>, Vec<String>>;
 fn concat(l: GenResult, r: GenResult) -> GenResult {
@@ -25,250 +25,301 @@ fn concat_multi(results: &[GenResult]) -> GenResult {
     return base;
 }
 const NOT_LVAR_ERR: &str = "left value cannot assingable";
-fn primary(m: &Primary) -> GenResult {
-    match &m.node {
-        PrimaryNode::Num(n) => Ok(vec![format!("push {}", n)]),
-        PrimaryNode::Expr(e) => expr(&e),
-        PrimaryNode::Lv(Lvar::Id(i)) => Ok(vec![
-            "mov rax, rbp".into(),
-            format!("sub rax, {}", i.offset),
-            "push [rax]".into(),
-        ]),
-    }
+struct Generator<'a> {
+    p: &'a Program,
+    jump_count: usize,
 }
-fn unary(u: &Unary) -> GenResult {
-    match u.prim.ope {
-        None | Some(AddSub::Plus) => {
-            return primary(&u.prim);
+impl Generator<'_> {
+    fn jump_label(&mut self) -> String {
+        let label = self.jump_count.to_string();
+        self.jump_count += 1;
+        label
+    }
+    fn primary(&mut self, m: &Primary) -> GenResult {
+        match &m.node {
+            PrimaryNode::Num(n) => Ok(vec![format!("push {}", n)]),
+            PrimaryNode::Expr(e) => self.expr(&e),
+            PrimaryNode::Lv(Lvar::Id(i)) => Ok(vec![
+                "mov rax, rbp".into(),
+                format!("sub rax, {}", i.offset),
+                "push [rax]".into(),
+            ]),
         }
-        _ => {
-            let prim = primary(&u.prim);
-            if prim.is_err() {
-                return prim;
+    }
+    fn unary(&mut self, u: &Unary) -> GenResult {
+        match u.prim.ope {
+            None | Some(AddSub::Plus) => {
+                return self.primary(&u.prim);
             }
-            let mut lines = [vec![format!("push {}", 0)], prim.unwrap()].concat();
+            _ => {
+                let prim = self.primary(&u.prim);
+                if prim.is_err() {
+                    return prim;
+                }
+                let mut lines = [vec![format!("push {}", 0)], prim.unwrap()].concat();
+                lines.push("pop rdi".into());
+                lines.push("pop rax".into());
+                lines.push("sub rax, rdi".into());
+                lines.push("push rax".into());
+                return Ok(lines);
+            }
+        }
+    }
+    fn mul(&mut self, m: &Mul) -> GenResult {
+        let first = self.unary(&m.first);
+        if first.is_err() {
+            return first;
+        }
+        if m.unarys.len() == 0 {
+            return first;
+        }
+        let mut lines = first.unwrap();
+        for u in m.unarys.iter() {
+            if u.ope.is_none() {
+                return Err(vec!["operator expected".into()]);
+            }
+            let second = self.unary(u);
+            if second.is_err() {
+                return second;
+            }
+            lines.extend(second.unwrap());
             lines.push("pop rdi".into());
             lines.push("pop rax".into());
-            lines.push("sub rax, rdi".into());
+            match u.ope.as_ref().unwrap() {
+                MulDiv::Multi => {
+                    lines.push("imul rax,rdi".into());
+                }
+                MulDiv::Divide => {
+                    lines.push("cqo".into());
+                    lines.push("idiv rax,rdi".into());
+                }
+            }
             lines.push("push rax".into());
-            return Ok(lines);
         }
+        return Ok(lines);
     }
-}
-fn mul(m: &Mul) -> GenResult {
-    let first = unary(&m.first);
-    if first.is_err() {
-        return first;
-    }
-    if m.unarys.len() == 0 {
-        return first;
-    }
-    let mut lines = first.unwrap();
-    for u in m.unarys.iter() {
-        if u.ope.is_none() {
-            return Err(vec!["operator expected".into()]);
+    fn add(&mut self, a: &Add) -> GenResult {
+        let first = self.mul(&a.first);
+        if first.is_err() {
+            return first;
         }
-        let second = unary(u);
-        if second.is_err() {
-            return second;
+        if a.muls.len() == 0 {
+            return first;
         }
-        lines.extend(second.unwrap());
-        lines.push("pop rdi".into());
-        lines.push("pop rax".into());
-        match u.ope.as_ref().unwrap() {
-            MulDiv::Multi => {
-                lines.push("imul rax,rdi".into());
+        let mut lines = first.unwrap();
+        for m in a.muls.iter() {
+            if m.ope.is_none() {
+                return Err(vec!["operator expected".into()]);
             }
-            MulDiv::Divide => {
-                lines.push("cqo".into());
-                lines.push("idiv rax,rdi".into());
+            let second = self.mul(m);
+            if second.is_err() {
+                return second;
             }
-        }
-        lines.push("push rax".into());
-    }
-    return Ok(lines);
-}
-fn add(a: &Add) -> GenResult {
-    let first = mul(&a.first);
-    if first.is_err() {
-        return first;
-    }
-    if a.muls.len() == 0 {
-        return first;
-    }
-    let mut lines = first.unwrap();
-    for m in a.muls.iter() {
-        if m.ope.is_none() {
-            return Err(vec!["operator expected".into()]);
-        }
-        let second = mul(m);
-        if second.is_err() {
-            return second;
-        }
-        lines.extend(second.unwrap());
-        lines.push("pop rdi".into());
-        lines.push("pop rax".into());
-        match m.ope.as_ref().unwrap() {
-            AddSub::Plus => {
-                lines.push("add rax, rdi".into());
+            lines.extend(second.unwrap());
+            lines.push("pop rdi".into());
+            lines.push("pop rax".into());
+            match m.ope.as_ref().unwrap() {
+                AddSub::Plus => {
+                    lines.push("add rax, rdi".into());
+                }
+                AddSub::Minus => {
+                    lines.push("sub rax, rdi".into());
+                }
             }
-            AddSub::Minus => {
-                lines.push("sub rax, rdi".into());
+            lines.push("push rax".into());
+        }
+        return Ok(lines);
+    }
+    fn relational(&mut self, rel: &Relational) -> GenResult {
+        let first = self.add(&rel.first);
+        if first.is_err() {
+            return first;
+        }
+        if rel.adds.len() == 0 {
+            return first;
+        }
+        let mut lines = first.unwrap();
+        for a in rel.adds.iter() {
+            if a.ope.is_none() {
+                return Err(vec!["operator expected".into()]);
             }
-        }
-        lines.push("push rax".into());
-    }
-    return Ok(lines);
-}
-fn relational(rel: &Relational) -> GenResult {
-    let first = add(&rel.first);
-    if first.is_err() {
-        return first;
-    }
-    if rel.adds.len() == 0 {
-        return first;
-    }
-    let mut lines = first.unwrap();
-    for a in rel.adds.iter() {
-        if a.ope.is_none() {
-            return Err(vec!["operator expected".into()]);
-        }
-        let second = add(a);
-        if second.is_err() {
-            return second;
-        }
-        lines.extend(second.unwrap());
-        lines.push("pop rdi".into());
-        lines.push("pop rax".into());
-        match a.ope.as_ref().unwrap() {
-            Compare::Lt => {
-                lines.push("cmp rax, rdi".into());
-                lines.push("setl al".into());
+            let second = self.add(a);
+            if second.is_err() {
+                return second;
             }
-            Compare::Lte => {
-                lines.push("cmp rax, rdi".into());
-                lines.push("setle al".into());
+            lines.extend(second.unwrap());
+            lines.push("pop rdi".into());
+            lines.push("pop rax".into());
+            match a.ope.as_ref().unwrap() {
+                Compare::Lt => {
+                    lines.push("cmp rax, rdi".into());
+                    lines.push("setl al".into());
+                }
+                Compare::Lte => {
+                    lines.push("cmp rax, rdi".into());
+                    lines.push("setle al".into());
+                }
+                Compare::Gt => {
+                    lines.push("cmp rdi, rax".into());
+                    lines.push("setl al".into());
+                }
+                Compare::Gte => {
+                    lines.push("cmp rdi, rax".into());
+                    lines.push("setle al".into());
+                }
             }
-            Compare::Gt => {
-                lines.push("cmp rdi, rax".into());
-                lines.push("setl al".into());
+            lines.push("movzb rax, al".into());
+            lines.push("push rax".into());
+        }
+        return Ok(lines);
+    }
+    fn equality(&mut self, eq: &Equality) -> GenResult {
+        let first = self.relational(&eq.first);
+        if first.is_err() {
+            return first;
+        }
+        if eq.relationals.len() == 0 {
+            return first;
+        }
+        let mut lines = first.unwrap();
+        for rel in eq.relationals.iter() {
+            if rel.ope.is_none() {
+                return Err(vec!["operator expected".into()]);
             }
-            Compare::Gte => {
-                lines.push("cmp rdi, rax".into());
-                lines.push("setle al".into());
+            let second = self.relational(rel);
+            if second.is_err() {
+                return second;
             }
+            let ope = rel.ope.as_ref().unwrap();
+            lines.append(second.unwrap().as_mut());
+            lines.push("pop rdi".into());
+            lines.push("pop rax".into());
+            lines.push("cmp rax, rdi".into());
+            match ope {
+                Equals::Equal => lines.push("sete al".into()),
+                Equals::NotEqual => lines.push("setne al".into()),
+            }
+            lines.push("movzb rax, al".into());
+            lines.push("push rax".into());
         }
-        lines.push("movzb rax, al".into());
-        lines.push("push rax".into());
+        return Ok(lines);
     }
-    return Ok(lines);
-}
-fn equality(eq: &Equality) -> GenResult {
-    let first = relational(&eq.first);
-    if first.is_err() {
-        return first;
-    }
-    if eq.relationals.len() == 0 {
-        return first;
-    }
-    let mut lines = first.unwrap();
-    for rel in eq.relationals.iter() {
-        if rel.ope.is_none() {
-            return Err(vec!["operator expected".into()]);
-        }
-        let second = relational(rel);
-        if second.is_err() {
-            return second;
-        }
-        let ope = rel.ope.as_ref().unwrap();
-        lines.append(second.unwrap().as_mut());
-        lines.push("pop rdi".into());
-        lines.push("pop rax".into());
-        lines.push("cmp rax, rdi".into());
-        match ope {
-            Equals::Equal => lines.push("sete al".into()),
-            Equals::NotEqual => lines.push("setne al".into()),
-        }
-        lines.push("movzb rax, al".into());
-        lines.push("push rax".into());
-    }
-    return Ok(lines);
-}
 
-fn lvar(e: &Lvar) -> GenResult {
-    match e {
-        Lvar::Id(i) => Ok(vec![
-            "mov rax, rbp".into(),
-            format!("sub rax, {}", i.offset),
-            "push rax".into(),
-        ]),
+    fn lvar(&mut self, e: &Lvar) -> GenResult {
+        match e {
+            Lvar::Id(i) => Ok(vec![
+                "mov rax, rbp".into(),
+                format!("sub rax, {}", i.offset),
+                "push rax".into(),
+            ]),
+        }
     }
-}
-fn assign(a: &Assign) -> GenResult {
-    if a.rvar.is_none() {
-        return equality(&a.lvar);
-    }
-    match a.lvar.lvar() {
-        None => Err(vec![NOT_LVAR_ERR.into()]),
-        Some(l) => {
-            let l = lvar(l);
-            let r = assign(a.rvar.as_ref().unwrap());
-            let lines = concat(l, r);
-            match lines {
-                Err(e) => Err(e),
-                Ok(ls) => Ok([
-                    ls,
-                    vec![
-                        "pop rdi".into(),
-                        "pop rax".into(),
-                        "mov [rax], rdi".into(),
-                        "push rdi".into(),
-                    ],
-                ]
-                .concat()),
+    fn assign(&mut self, a: &Assign) -> GenResult {
+        if a.rvar.is_none() {
+            return self.equality(&a.lvar);
+        }
+        match a.lvar.lvar() {
+            None => Err(vec![NOT_LVAR_ERR.into()]),
+            Some(l) => {
+                let l = self.lvar(l);
+                let r = self.assign(a.rvar.as_ref().unwrap());
+                let lines = concat(l, r);
+                match lines {
+                    Err(e) => Err(e),
+                    Ok(ls) => Ok([
+                        ls,
+                        vec![
+                            "pop rdi".into(),
+                            "pop rax".into(),
+                            "mov [rax], rdi".into(),
+                            "push rdi".into(),
+                        ],
+                    ]
+                    .concat()),
+                }
             }
         }
     }
-}
-fn expr(e: &Expr) -> GenResult {
-    assign(&e.assign)
-}
-fn stmt(s: &Stmt) -> GenResult {
-    expr(&s.expr)
-}
-fn program(p: &Program) -> GenResult {
-    let mut lines = Vec::new();
-    for s in p.stmt.iter() {
-        match stmt(s) {
-            Ok(mut l) => {
-                lines.append(&mut l);
-            }
-            Err(e) => {
-                return Err(e);
-            }
-        };
-        if !s.expr.ret {
-            continue;
-        }
-        lines.extend(epilogue().unwrap());
+    fn expr(&mut self, e: &Expr) -> GenResult {
+        self.assign(&e.assign)
     }
-    Ok(lines)
-}
-fn prologue(p: &Program) -> GenResult {
-    Ok(vec![
-        "push rbp #prlg ->".into(),
-        "mov rbp, rsp".into(),
-        format!("sub rsp, {} {}", p.required_memory, "#<- prlg"),
-    ])
-}
-fn epilogue() -> GenResult {
-    Ok(vec![
-        "pop rax #eplg ->".into(),
-        "mov rsp, rbp".into(),
-        "pop rbp".into(),
-        "ret #<- eplg".into(),
-    ])
+    fn if_(&mut self, i: &If) -> GenResult {
+        let cond = self.expr(&i.cond)?;
+        let end_label = format!(".IfEnd{}", self.jump_label());
+        let stmt = self.stmt(&i.stmt)?;
+        if i.else_.is_none() {
+            return Ok([
+                cond,
+                vec![
+                    "pop rax".into(),
+                    "cmp rax, 0".into(),
+                    "je ".to_string() + &end_label,
+                ],
+                stmt,
+                vec![end_label + ":"],
+            ]
+            .concat());
+        }
+        let else_ = self.stmt(i.else_.as_ref().unwrap())?;
+        let else_label = format!(".IfElse{}", self.jump_label());
+        Ok([
+            cond,
+            vec![
+                "pop rax".into(),
+                "cmp rax, 0".into(),
+                "je ".to_string() + &else_label,
+            ],
+            stmt,
+            vec!["jmp ".to_string() + &end_label, else_label + ":"],
+            else_,
+            vec![end_label + ":"],
+        ]
+        .concat())
+    }
+    fn stmt(&mut self, stmt: &Statement) -> GenResult {
+        match stmt {
+            Statement::If(i) => self.if_(i),
+            Statement::Stmt(s) => {
+                let lines = self.expr(&s.expr)?;
+                if s.expr.ret {
+                    Ok([lines, self.epilogue()?].concat())
+                } else {
+                    Ok(lines)
+                }
+            }
+        }
+    }
+    fn program(&mut self) -> GenResult {
+        let mut lines = Vec::new();
+        for s in self.p.stmt.iter() {
+            let ls = self.stmt(s)?;
+            lines.extend(ls);
+        }
+        Ok(lines)
+    }
+    fn prologue(&mut self) -> GenResult {
+        Ok(vec![
+            "push rbp #prlg ->".into(),
+            "mov rbp, rsp".into(),
+            format!("sub rsp, {} {}", self.p.required_memory, "#<- prlg"),
+        ])
+    }
+    fn epilogue(&mut self) -> GenResult {
+        Ok(vec![
+            "pop rax #eplg ->".into(),
+            "mov rsp, rbp".into(),
+            "pop rbp".into(),
+            "ret #<- eplg".into(),
+        ])
+    }
+    fn generate(&mut self) -> GenResult {
+        concat_multi(&[self.prologue(), self.program(), self.epilogue()])
+    }
 }
 pub fn generate(p: &Program) -> GenResult {
-    concat_multi(&[prologue(p), program(p), epilogue()])
+    Generator {
+        p: p,
+        jump_count: 0,
+    }
+    .generate()
 }

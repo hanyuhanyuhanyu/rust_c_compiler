@@ -22,10 +22,31 @@ pub enum Equals {
 }
 #[derive(Debug)]
 pub struct Program {
-    pub stmt: Vec<Stmt>,
+    pub stmt: Vec<Statement>,
     pub required_memory: usize,
 }
 
+#[derive(Debug)]
+pub struct If {
+    pub cond: Expr,
+    pub stmt: Box<Statement>,
+    pub else_: Option<Box<Statement>>,
+}
+// #[derive(Debug)]
+// pub struct For {
+//     pub expr: Expr,
+// }
+// #[derive(Debug)]
+// pub struct While {
+//     pub expr: Expr,
+// }
+#[derive(Debug)]
+pub enum Statement {
+    If(If),
+    // For(For),
+    // While(While),
+    Stmt(Stmt),
+}
 #[derive(Debug)]
 pub struct Stmt {
     pub expr: Expr,

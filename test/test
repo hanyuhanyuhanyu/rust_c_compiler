@@ -43,4 +43,11 @@
 "a=3; b=a+1; c= 7 * (a +b ); c - b * a;" 37
 "a=3; b=a=5; b=2; a-b;" 3
 "hoge=2; fuga=3*5; hoge+fuga;" 17
+"returna=1; returnb=2; return 3;" 3
 "a=3; return a+4; a=2; return a+1;" 7
+"if (1) return 1; return 2;" 1
+"if (0) return 1; return 2;" 2
+"a=3; b = 8; if (a > b) return 1; return 2;" 2
+"a=3; if (a > 2) a = a + 1; else  a = a + 2;" 4
+"a=3; if (a > 4) a = a + 1; else  a = a + 2;" 5
+"a = 10; if(a >= 10) if (a >8) a=a + 100; else a=a + 50; else a=a + 10; return a;" 110

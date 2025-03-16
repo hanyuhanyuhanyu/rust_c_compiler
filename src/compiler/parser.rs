@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use super::node::{
-    Add, AddSub, Assign, Compare, Equality, Equals, Expr, Ident, Lvar, Mul, MulDiv, Primary,
-    PrimaryNode, Program, Relational, Stmt, Unary,
+    Add, AddSub, Assign, Compare, Equality, Equals, Expr, Ident, If, Lvar, Mul, MulDiv, Primary,
+    PrimaryNode, Program, Relational, Statement, Stmt, Unary,
 };
 const IDENTITY_OFFSET: usize = 8;
 const RETURN: &str = "return";
@@ -74,24 +74,24 @@ impl Parser<'_> {
             }
         }
     }
-    fn will_return(&mut self) -> bool {
+    fn is_top(&mut self, var: &str) -> bool {
         self.space();
         if !self
             .input
             .chars()
             .skip(self.index)
-            .take(RETURN.len())
-            .eq(RETURN.chars())
+            .take(var.len())
+            .eq(var.chars())
         {
             return false;
         }
-        match self.input.chars().nth(self.index + RETURN.len()) {
-            None => false,
+        match self.input.chars().nth(self.index + var.len()) {
+            None => true,
             Some(c) => {
                 if c.is_token_parts() {
                     return false;
                 }
-                self.index += RETURN.len();
+                self.index += var.len();
                 true
             }
         }
@@ -363,7 +363,7 @@ impl Parser<'_> {
         }
     }
     fn expr(&mut self) -> ParseResult<Expr> {
-        let ret = self.will_return();
+        let ret = self.is_top(RETURN);
         match self.assign() {
             Ok(a) => Ok(Expr {
                 assign: a,
@@ -372,18 +372,54 @@ impl Parser<'_> {
             Err(e) => Err(e),
         }
     }
-    fn stmt(&mut self) -> ParseResult<Stmt> {
-        let stmt = match self.expr() {
-            Ok(e) => Ok(Stmt { expr: e }),
-            Err(e) => Err(e),
-        };
-        if stmt.is_err() {
-            return stmt;
+    // fn while_(&mut self) -> ParseResult<Stmt> {}
+    // fn for_(&mut self) -> ParseResult<For> {
+    //     if !self.consume("(") {
+    //         return Err(self.fail("( expected before 'if'".into()));
+    //     }
+    //     let cond = self.expr()?;
+    //     if !self.consume(")") {
+    //         return Err(self.fail(") expected after 'if'".into()));
+    //     }
+    // }
+    fn if_(&mut self) -> ParseResult<If> {
+        if !self.consume("(") {
+            return Err(self.fail("( expected before 'if'".into()));
         }
+        let cond = self.expr()?;
+        if !self.consume(")") {
+            return Err(self.fail(") expected after 'if'".into()));
+        }
+        let stmt = self.stmt()?;
+        if !self.consume("else") {
+            Ok(If {
+                cond,
+                stmt: Box::new(stmt),
+                else_: None,
+            })
+        } else {
+            Ok(If {
+                cond,
+                stmt: Box::new(stmt),
+                else_: Some(Box::new(self.stmt()?)),
+            })
+        }
+    }
+    fn stmt(&mut self) -> ParseResult<Statement> {
+        if self.is_top("if") {
+            return Ok(Statement::If(self.if_()?));
+        }
+        // if self.is_top("for") {
+        //     return Ok(Statement::For(self.for_()?));
+        // }
+        // if self.is_top("while") {
+        //     return Ok(Statement::While(self.While_()?));
+        // }
+        let expr = self.expr()?;
         if !self.consume(";") {
             return Err(self.fail("; expected".into()));
         }
-        return stmt;
+        return Ok(Statement::Stmt(Stmt { expr }));
     }
     fn program(&mut self) -> ParseResult<Program> {
         let mut stmts = Vec::new();
