@@ -36,15 +36,16 @@ pub struct If {
 // pub struct For {
 //     pub expr: Expr,
 // }
-// #[derive(Debug)]
-// pub struct While {
-//     pub expr: Expr,
-// }
+#[derive(Debug)]
+pub struct While {
+    pub cond: Expr,
+    pub stmt: Box<Statement>,
+}
 #[derive(Debug)]
 pub enum Statement {
     If(If),
     // For(For),
-    // While(While),
+    While(While),
     Stmt(Stmt),
 }
 #[derive(Debug)]

@@ -1,6 +1,6 @@
 use super::node::{
     Add, AddSub, Assign, Compare, Equality, Equals, Expr, If, Lvar, Mul, MulDiv, Primary,
-    PrimaryNode, Program, Relational, Statement, Unary,
+    PrimaryNode, Program, Relational, Statement, Unary, While,
 };
 type GenResult = Result<Vec<String>, Vec<String>>;
 fn concat(l: GenResult, r: GenResult) -> GenResult {
@@ -243,6 +243,24 @@ impl Generator<'_> {
     fn expr(&mut self, e: &Expr) -> GenResult {
         self.assign(&e.assign)
     }
+    fn while_(&mut self, w: &While) -> GenResult {
+        let cond = self.expr(&w.cond)?;
+        let start_label = format!(".WhileStart{}", self.jump_label());
+        let end_label = format!(".WhileEnd{}", self.jump_label());
+        let stmt = self.stmt(&w.stmt)?;
+        Ok([
+            vec![start_label.clone() + ":"],
+            cond,
+            vec![
+                "pop rax".into(),
+                "cmp rax, 0".into(),
+                "je ".to_string() + &end_label,
+            ],
+            stmt,
+            vec!["jmp ".to_string() + &start_label, end_label + ":"],
+        ]
+        .concat())
+    }
     fn if_(&mut self, i: &If) -> GenResult {
         let cond = self.expr(&i.cond)?;
         let end_label = format!(".IfEnd{}", self.jump_label());
@@ -279,6 +297,7 @@ impl Generator<'_> {
     fn stmt(&mut self, stmt: &Statement) -> GenResult {
         match stmt {
             Statement::If(i) => self.if_(i),
+            Statement::While(w) => self.while_(w),
             Statement::Stmt(s) => {
                 let lines = self.expr(&s.expr)?;
                 if s.expr.ret {

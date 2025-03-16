@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::node::{
     Add, AddSub, Assign, Compare, Equality, Equals, Expr, Ident, If, Lvar, Mul, MulDiv, Primary,
-    PrimaryNode, Program, Relational, Statement, Stmt, Unary,
+    PrimaryNode, Program, Relational, Statement, Stmt, Unary, While,
 };
 const IDENTITY_OFFSET: usize = 8;
 const RETURN: &str = "return";
@@ -372,7 +372,20 @@ impl Parser<'_> {
             Err(e) => Err(e),
         }
     }
-    // fn while_(&mut self) -> ParseResult<Stmt> {}
+    fn while_(&mut self) -> ParseResult<While> {
+        if !self.consume("(") {
+            return Err(self.fail("( expected before 'while'".into()));
+        }
+        let cond = self.expr()?;
+        if !self.consume(")") {
+            return Err(self.fail(") expected after 'while'".into()));
+        }
+        let stmt = self.stmt()?;
+        Ok(While {
+            cond,
+            stmt: Box::new(stmt),
+        })
+    }
     // fn for_(&mut self) -> ParseResult<For> {
     //     if !self.consume("(") {
     //         return Err(self.fail("( expected before 'if'".into()));
@@ -412,9 +425,9 @@ impl Parser<'_> {
         // if self.is_top("for") {
         //     return Ok(Statement::For(self.for_()?));
         // }
-        // if self.is_top("while") {
-        //     return Ok(Statement::While(self.While_()?));
-        // }
+        if self.is_top("while") {
+            return Ok(Statement::While(self.while_()?));
+        }
         let expr = self.expr()?;
         if !self.consume(";") {
             return Err(self.fail("; expected".into()));
