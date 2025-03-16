@@ -247,11 +247,10 @@ fn program(p: &Program) -> GenResult {
                 return Err(e);
             }
         };
-        // 違う。exprの中でepilogueを呼ぶべき
-        // まあ制御構文に手を出すあたりで死ぬはずなのでその時に苦しもう
-        if s.expr.ret {
-            return Ok(lines);
+        if !s.expr.ret {
+            continue;
         }
+        lines.extend(epilogue().unwrap());
     }
     Ok(lines)
 }
@@ -267,8 +266,7 @@ fn epilogue() -> GenResult {
         "pop rax #eplg ->".into(),
         "mov rsp, rbp".into(),
         "pop rbp".into(),
-        "ret".into(),
-        "push rax #<- eplg".into(),
+        "ret #<- eplg".into(),
     ])
 }
 pub fn generate(p: &Program) -> GenResult {
