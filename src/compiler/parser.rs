@@ -6,6 +6,9 @@ use super::node::{
 };
 const IDENTITY_OFFSET: usize = 8;
 const RETURN: &str = "return";
+const IF: &str = "if";
+const WHILE: &str = "while";
+const FOR: &str = "for";
 
 #[derive(Debug)]
 pub struct ParseFailure {
@@ -37,20 +40,55 @@ impl Parser<'_> {
         self.index += count;
         self.line_index += count;
     }
-    fn consume(&mut self, str: &str) -> bool {
+    fn consume(&mut self, str: &str) -> Option<String> {
         self.space();
-        if self
-            .input
-            .chars()
-            .skip(self.index)
-            .take(str.len())
-            .eq(str.chars())
-        {
+        let end = self.index + str.len();
+        let taken = self.input.get(self.index..end)?;
+        if taken.eq(str) {
             self.succ(str.len());
-            return true;
+            Some(taken.into())
+        } else {
+            None
         }
-        false
     }
+    fn consume_f(&mut self, checker: fn(check: char) -> bool) -> Option<String> {
+        self.space();
+        let mut str = "".to_string();
+        loop {
+            if self.empty() {
+                break;
+            }
+            match self.top_f(checker) {
+                None => break,
+                Some(c) => {
+                    str.push(c);
+                }
+            };
+        }
+        if str.is_empty() { None } else { Some(str) }
+    }
+    fn consume_expect(&mut self, checker: fn(check: char) -> bool, expect: &str) -> Option<String> {
+        self.space();
+        let mut str = "".to_string();
+        let mut offset = 0;
+        loop {
+            if self.empty() {
+                break;
+            }
+            let c = self.input.chars().nth(self.index + offset);
+            if c.is_none() || !checker(c.unwrap()) {
+                break;
+            }
+            offset += 1;
+            str.push(c.unwrap())
+        }
+        if !str.eq(expect) {
+            return None;
+        }
+        self.succ(str.len());
+        Some(str)
+    }
+
     fn empty(&mut self) -> bool {
         self.space();
         self.index == self.input.len()
@@ -67,14 +105,22 @@ impl Parser<'_> {
             reason: reason,
         }
     }
-    fn check_top(&mut self, checker: fn(check: char) -> bool) -> bool {
+    fn check_top(&mut self, var: &str) -> bool {
+        self.space();
+        self.input
+            .chars()
+            .skip(self.index)
+            .take(var.len())
+            .eq(var.chars())
+    }
+    fn check_top_f(&mut self, checker: fn(check: char) -> bool) -> bool {
         self.space();
         match self.input.chars().nth(self.index) {
             None => false,
             Some(c) => checker(c),
         }
     }
-    fn seek(&mut self, checker: fn(check: char) -> bool) -> Option<char> {
+    fn top_f(&mut self, checker: fn(check: char) -> bool) -> Option<char> {
         self.space();
         match self.input.chars().nth(self.index) {
             None => None,
@@ -87,52 +133,6 @@ impl Parser<'_> {
                 }
             }
         }
-    }
-    fn watch_top(&mut self, var: &str) -> bool {
-        self.space();
-        self.input
-            .chars()
-            .skip(self.index)
-            .take(var.len())
-            .eq(var.chars())
-    }
-    fn try_consume_top(&mut self, var: &str) -> bool {
-        self.space();
-        if !self
-            .input
-            .chars()
-            .skip(self.index)
-            .take(var.len())
-            .eq(var.chars())
-        {
-            return false;
-        }
-        match self.input.chars().nth(self.index + var.len()) {
-            None => true,
-            Some(c) => {
-                if c.is_token_parts() {
-                    return false;
-                }
-                self.succ(var.len());
-                true
-            }
-        }
-    }
-    fn extract(&mut self, checker: fn(check: char) -> bool) -> Option<String> {
-        self.space();
-        let mut str = "".to_string();
-        loop {
-            if self.empty() {
-                break;
-            }
-            match self.seek(checker) {
-                None => break,
-                Some(c) => {
-                    str.push(c);
-                }
-            };
-        }
-        if str.is_empty() { None } else { Some(str) }
     }
 
     fn space(&mut self) {
@@ -166,7 +166,7 @@ impl Parser<'_> {
         match self.expr() {
             Err(e) => Err(e),
             Ok(e) => {
-                if !self.consume(")") {
+                if self.consume(")").is_none() {
                     return Err(self.fail("parenthesis unbalanced".into()));
                 }
                 Ok(Primary {
@@ -183,7 +183,7 @@ impl Parser<'_> {
             if self.empty() {
                 break;
             }
-            match self.seek(|c| c.is_numeric()) {
+            match self.top_f(|c| c.is_numeric()) {
                 None => break,
                 Some(c) => raw_num.push(c),
             }
@@ -197,7 +197,7 @@ impl Parser<'_> {
         })
     }
     fn p_ident(&mut self, ope: Option<AddSub>) -> ParseResult<Primary> {
-        match self.extract(|c| c.is_token_parts()) {
+        match self.consume_f(|c| c.is_token_parts()) {
             None => Err(self.fail(
                 "identity expected, but identity can only contain 'a-z', 'A-Z', '0-9' and '_'"
                     .into(),
@@ -225,10 +225,10 @@ impl Parser<'_> {
         if self.empty() {
             return Err(self.fail("number or ( expected".into()));
         }
-        if self.consume("(") {
+        if self.consume("(").is_some() {
             return self.p_exp(ope);
         }
-        if self.check_top(|c| c.is_numeric()) {
+        if self.check_top_f(|c| c.is_numeric()) {
             self.p_num(ope)
         } else {
             self.p_ident(ope)
@@ -238,9 +238,9 @@ impl Parser<'_> {
         if self.empty() {
             return Err(self.fail("+, -, num or expression expected".into()));
         }
-        let addsub = if self.consume("+") {
+        let addsub = if self.consume("+").is_some() {
             Some(AddSub::Plus)
-        } else if self.consume("-") {
+        } else if self.consume("-").is_some() {
             Some(AddSub::Minus)
         } else {
             None
@@ -264,9 +264,9 @@ impl Parser<'_> {
             if self.empty() {
                 break;
             }
-            let ope = if self.consume("*") {
+            let ope = if self.consume("*").is_some() {
                 Some(MulDiv::Multi)
-            } else if self.consume("/") {
+            } else if self.consume("/").is_some() {
                 Some(MulDiv::Divide)
             } else {
                 None
@@ -297,9 +297,9 @@ impl Parser<'_> {
             if self.empty() {
                 break;
             }
-            let ope = if self.consume("+") {
+            let ope = if self.consume("+").is_some() {
                 Some(AddSub::Plus)
-            } else if self.consume("-") {
+            } else if self.consume("-").is_some() {
                 Some(AddSub::Minus)
             } else {
                 None
@@ -330,13 +330,13 @@ impl Parser<'_> {
             if self.empty() {
                 break;
             }
-            let ope = if self.consume(">=") {
+            let ope = if self.consume(">=").is_some() {
                 Some(Compare::Gte)
-            } else if self.consume("<=") {
+            } else if self.consume("<=").is_some() {
                 Some(Compare::Lte)
-            } else if self.consume("<") {
+            } else if self.consume("<").is_some() {
                 Some(Compare::Lt)
-            } else if self.consume(">") {
+            } else if self.consume(">").is_some() {
                 Some(Compare::Gt)
             } else {
                 None
@@ -366,9 +366,9 @@ impl Parser<'_> {
             if self.empty() {
                 break;
             }
-            let ope = if self.consume("==") {
+            let ope = if self.consume("==").is_some() {
                 Some(Equals::Equal)
-            } else if self.consume("!=") {
+            } else if self.consume("!=").is_some() {
                 Some(Equals::NotEqual)
             } else {
                 None
@@ -390,7 +390,7 @@ impl Parser<'_> {
         if eq.is_err() {
             return Err(eq.unwrap_err());
         }
-        if !self.consume("=") {
+        if self.consume("=").is_none() {
             return Ok(Assign {
                 lvar: eq.unwrap(),
                 rvar: None,
@@ -405,21 +405,21 @@ impl Parser<'_> {
         }
     }
     fn expr(&mut self) -> ParseResult<Expr> {
-        let ret = self.try_consume_top(RETURN);
+        let ret = self.consume_expect(|c| c.is_token_parts(), RETURN);
         match self.assign() {
             Ok(a) => Ok(Expr {
                 assign: a,
-                ret: ret,
+                ret: ret.is_some(),
             }),
             Err(e) => Err(e),
         }
     }
     fn while_(&mut self) -> ParseResult<While> {
-        if !self.consume("(") {
+        if self.consume("(").is_none() {
             return Err(self.fail("( expected before 'while'".into()));
         }
         let cond = self.expr()?;
-        if !self.consume(")") {
+        if self.consume(")").is_none() {
             return Err(self.fail(") expected after 'while'".into()));
         }
         let stmt = self.stmt()?;
@@ -429,31 +429,31 @@ impl Parser<'_> {
         })
     }
     fn for_(&mut self) -> ParseResult<For> {
-        if !self.consume("(") {
+        if self.consume("(").is_none() {
             return Err(self.fail("( expected before 'for'".into()));
         }
-        let init = if self.watch_top(";") {
+        let init = if self.check_top(";") {
             None
         } else {
             Some(self.expr()?)
         };
-        if !self.consume(";") {
+        if self.consume(";").is_none() {
             return Err(self.fail("; expected after for initialize section".into()));
         }
-        let cond = if self.watch_top(";") {
+        let cond = if self.check_top(";") {
             None
         } else {
             Some(self.expr()?)
         };
-        if !self.consume(";") {
+        if self.consume(";").is_none() {
             return Err(self.fail("; expected after for condition section".into()));
         }
-        let step = if self.watch_top(")") {
+        let step = if self.check_top(")") {
             None
         } else {
             Some(self.expr()?)
         };
-        if !self.consume(")") {
+        if self.consume(")").is_none() {
             return Err(self.fail(") expected after 'for'".into()));
         }
         Ok(For {
@@ -464,15 +464,15 @@ impl Parser<'_> {
         })
     }
     fn if_(&mut self) -> ParseResult<If> {
-        if !self.consume("(") {
+        if self.consume("(").is_none() {
             return Err(self.fail("( expected before 'if'".into()));
         }
         let cond = self.expr()?;
-        if !self.consume(")") {
+        if self.consume(")").is_none() {
             return Err(self.fail(") expected after 'if'".into()));
         }
         let stmt = self.stmt()?;
-        if !self.consume("else") {
+        if self.consume("else").is_none() {
             Ok(If {
                 cond,
                 stmt: Box::new(stmt),
@@ -489,31 +489,31 @@ impl Parser<'_> {
     fn multi_stmts(&mut self) -> ParseResult<MultiStmt> {
         let mut stmts = Vec::new();
         loop {
-            if self.watch_top("}") || self.empty() {
+            if self.check_top("}") || self.empty() {
                 break;
             };
             stmts.push(self.stmt()?);
         }
-        if !self.consume("}") {
+        if self.consume("}").is_none() {
             return Err(self.fail("bracket not balanced".into()));
         }
         Ok(MultiStmt { stmts: stmts })
     }
     fn stmt(&mut self) -> ParseResult<Statement> {
-        if self.try_consume_top("if") {
+        if self.consume_expect(|c| c.is_token_parts(), IF).is_some() {
             return Ok(Statement::If(self.if_()?));
         }
-        if self.try_consume_top("for") {
+        if self.consume_expect(|c| c.is_token_parts(), FOR).is_some() {
             return Ok(Statement::For(self.for_()?));
         }
-        if self.try_consume_top("while") {
+        if self.consume_expect(|c| c.is_token_parts(), WHILE).is_some() {
             return Ok(Statement::While(self.while_()?));
         }
-        if self.try_consume_top("{") {
+        if self.consume("{").is_some() {
             return Ok(Statement::MStmt(self.multi_stmts()?));
         }
         let expr = self.expr()?;
-        if !self.consume(";") {
+        if self.consume(";").is_none() {
             return Err(self.fail("; expected".into()));
         }
         return Ok(Statement::Stmt(Stmt { expr }));
