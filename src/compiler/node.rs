@@ -20,10 +20,27 @@ pub enum Equals {
     Equal,
     NotEqual,
 }
+pub enum Type {
+    Int,
+}
+#[derive(Debug)]
+pub struct Fcall {
+    pub ident: String,
+    // pub args: Vec<Ident>,
+}
+#[derive(Debug)]
+pub struct Fdef {
+    // pub type_: Type,
+    pub ident: String,
+    pub fimpl: Block,
+    // pub args: Vec<Ident>,
+    pub required_memory: usize,
+}
 #[derive(Debug)]
 pub struct Program {
-    pub stmt: Vec<Statement>,
-    pub required_memory: usize,
+    pub fdefs: Vec<Fdef>,
+    // pub stmt: Vec<Statement>,
+    // pub required_memory: usize,
 }
 
 #[derive(Debug)]
@@ -49,7 +66,7 @@ pub struct Stmt {
     pub expr: Expr,
 }
 #[derive(Debug)]
-pub struct MultiStmt {
+pub struct Block {
     pub stmts: Vec<Statement>,
 }
 #[derive(Debug)]
@@ -58,7 +75,7 @@ pub enum Statement {
     For(For),
     While(While),
     Stmt(Stmt),
-    MStmt(MultiStmt),
+    MStmt(Block),
 }
 #[derive(Debug)]
 pub struct Expr {
@@ -147,6 +164,7 @@ pub enum PrimaryNode {
     Num(String),
     Lv(Lvar),
     Expr(Box<Expr>),
+    Fcall(Fcall),
 }
 #[derive(Debug)]
 pub struct Primary {

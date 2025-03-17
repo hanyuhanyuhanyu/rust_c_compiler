@@ -1,7 +1,7 @@
 mod compiler;
 fn main() {
-    let tests = vec!["a = 0; b=1; if (a < 1) { b = b +2; a = a + 5; } return a+b;"];
+    let tests = vec!["int main() {return 1;}"];
     for t in tests.iter() {
-        print!("{:?}", compiler::compiler::compile((*t).into()));
+        print!("{}", compiler::compiler::compile((*t).into()).join("\n"));
     }
 }

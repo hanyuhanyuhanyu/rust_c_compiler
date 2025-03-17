@@ -1,6 +1,6 @@
 use super::node::{
-    Add, AddSub, Assign, Compare, Equality, Equals, Expr, For, If, Lvar, Mul, MulDiv, Primary,
-    PrimaryNode, Program, Relational, Statement, Unary, While,
+    Add, AddSub, Assign, Compare, Equality, Equals, Expr, Fcall, Fdef, For, If, Lvar, Mul, MulDiv,
+    Primary, PrimaryNode, Program, Relational, Statement, Unary, While,
 };
 type GenResult = Result<Vec<String>, Vec<String>>;
 fn concat(l: GenResult, r: GenResult) -> GenResult {
@@ -35,10 +35,14 @@ impl Generator<'_> {
         self.jump_count += 1;
         label
     }
+    fn fcall(&mut self, f: &Fcall) -> GenResult {
+        Ok(vec![format!("call {}", f.ident,), "push rax".into()])
+    }
     fn primary(&mut self, m: &Primary) -> GenResult {
         match &m.node {
             PrimaryNode::Num(n) => Ok(vec![format!("push {}", n)]),
             PrimaryNode::Expr(e) => self.expr(&e),
+            PrimaryNode::Fcall(f) => self.fcall(f),
             PrimaryNode::Lv(Lvar::Id(i)) => Ok(vec![
                 "mov rax, rbp".into(),
                 format!("sub rax, {}", i.offset),
@@ -56,12 +60,14 @@ impl Generator<'_> {
                 if prim.is_err() {
                     return prim;
                 }
-                let mut lines = [vec![format!("push {}", 0)], prim.unwrap()].concat();
-                lines.push("pop rdi".into());
-                lines.push("pop rax".into());
-                lines.push("sub rax, rdi".into());
-                lines.push("push rax".into());
-                return Ok(lines);
+                Ok([
+                    prim.unwrap(),
+                    vec!["push 0", "pop rdi", "pop rax", "sub rdi, rax", "push rax"]
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect(),
+                ]
+                .concat())
             }
         }
     }
@@ -346,19 +352,20 @@ impl Generator<'_> {
             }
         }
     }
-    fn program(&mut self) -> GenResult {
+    fn fimpl(&mut self, f: &Fdef) -> GenResult {
         let mut lines = Vec::new();
-        for s in self.p.stmt.iter() {
+        for s in f.fimpl.stmts.iter() {
             let ls = self.stmt(s)?;
             lines.extend(ls);
         }
         Ok(lines)
     }
-    fn prologue(&mut self) -> GenResult {
+    fn prologue(&mut self, f: &Fdef) -> GenResult {
         Ok(vec![
+            format!("{}:", f.ident),
             "push rbp #prlg ->".into(),
             "mov rbp, rsp".into(),
-            format!("sub rsp, {} {}", self.p.required_memory, "#<- prlg"),
+            format!("sub rsp, {} {}", f.required_memory, "#<- prlg"),
         ])
     }
     fn epilogue(&mut self) -> GenResult {
@@ -369,8 +376,18 @@ impl Generator<'_> {
             "ret #<- eplg".into(),
         ])
     }
+    fn fdef(&mut self) -> GenResult {
+        let mut genr = Ok(Vec::new());
+        for f in self.p.fdefs.iter() {
+            genr = concat(
+                genr,
+                concat_multi(&[self.prologue(f), self.fimpl(f), self.epilogue()]),
+            );
+        }
+        genr
+    }
     fn generate(&mut self) -> GenResult {
-        concat_multi(&[self.prologue(), self.program(), self.epilogue()])
+        self.fdef()
     }
 }
 pub fn generate(p: &Program) -> GenResult {

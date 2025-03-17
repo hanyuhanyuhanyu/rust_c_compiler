@@ -12,14 +12,9 @@ fn main() {
     println!(
         ".intel_syntax noprefix
 .globl main
-main:
 {}
 ",
-        compiler::compiler::compile(raw_stmt)
-            .iter()
-            .map(|a| format!("    {}", a))
-            .collect::<Vec<String>>()
-            .join("\n")
+        compiler::compiler::compile(raw_stmt).join("\n")
     );
     return;
 }

@@ -1,14 +1,18 @@
 use std::collections::HashMap;
 
 use super::node::{
-    Add, AddSub, Assign, Compare, Equality, Equals, Expr, For, Ident, If, Lvar, Mul, MulDiv,
-    MultiStmt, Primary, PrimaryNode, Program, Relational, Statement, Stmt, Unary, While,
+    Add, AddSub, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For, Ident, If, Lvar,
+    Mul, MulDiv, Primary, PrimaryNode, Program, Relational, Statement, Stmt, Type, Unary, While,
 };
 const IDENTITY_OFFSET: usize = 8;
 const RETURN: &str = "return";
 const IF: &str = "if";
 const WHILE: &str = "while";
 const FOR: &str = "for";
+const INT: &str = "int";
+const TYPES: [&str; 1] = [INT];
+const BLOCK_EXPECTED: &str = "block begin { expected";
+const BRACKET_NOT_BALANCED: &str = "bracket{} not balanced";
 
 #[derive(Debug)]
 pub struct ParseFailure {
@@ -196,30 +200,31 @@ impl Parser<'_> {
             node: PrimaryNode::Num(raw_num),
         })
     }
-    fn p_ident(&mut self, ope: Option<AddSub>) -> ParseResult<Primary> {
-        match self.consume_f(|c| c.is_token_parts()) {
-            None => Err(self.fail(
-                "identity expected, but identity can only contain 'a-z', 'A-Z', '0-9' and '_'"
-                    .into(),
-            )),
-
-            Some(i) => {
-                let offset = match self.idents.get(&i) {
-                    None => {
-                        self.ident_count += 1;
-                        let o = self.ident_count * 8;
-                        self.idents.insert(i, o);
-                        o
-                    }
-                    Some(ofs) => *ofs,
-                };
-
-                Ok(Primary {
-                    ope: ope,
-                    node: PrimaryNode::Lv(Lvar::Id(Ident { offset: offset })),
-                })
+    fn get_ident(&mut self) -> Option<String> {
+        self.consume_f(|c| c.is_token_parts())
+    }
+    fn p_ident(&mut self, ope: Option<AddSub>, ident: String) -> ParseResult<Primary> {
+        let offset = match self.idents.get(&ident) {
+            None => {
+                self.ident_count += 1;
+                let o = self.ident_count * 8;
+                self.idents.insert(ident, o);
+                o
             }
-        }
+            Some(ofs) => *ofs,
+        };
+
+        Ok(Primary {
+            ope,
+            node: PrimaryNode::Lv(Lvar::Id(Ident { offset: offset })),
+        })
+    }
+    fn fcall(&mut self, ope: Option<AddSub>, ident: String) -> ParseResult<Primary> {
+        let _args = self.parenthesized(|| Ok(1))?;
+        Ok(Primary {
+            ope,
+            node: PrimaryNode::Fcall(Fcall { ident }),
+        })
     }
     fn primary(&mut self, ope: Option<AddSub>) -> ParseResult<Primary> {
         if self.empty() {
@@ -228,10 +233,18 @@ impl Parser<'_> {
         if self.consume("(").is_some() {
             return self.p_exp(ope);
         }
+        // 0-9なら数値と決めつけてよいかは疑問の余地あり
         if self.check_top_f(|c| c.is_numeric()) {
-            self.p_num(ope)
+            return self.p_num(ope);
+        }
+        let ident = self.consume_f(|c| c.is_token_parts());
+        if ident.is_none() {
+            return Err(self.fail("identity expected".into()));
+        }
+        if self.check_top("(") {
+            self.fcall(ope, ident.unwrap())
         } else {
-            self.p_ident(ope)
+            self.p_ident(ope, ident.unwrap())
         }
     }
     fn unary(&mut self, ope: Option<MulDiv>) -> ParseResult<Unary> {
@@ -486,7 +499,10 @@ impl Parser<'_> {
             })
         }
     }
-    fn multi_stmts(&mut self) -> ParseResult<MultiStmt> {
+    fn block(&mut self) -> ParseResult<Block> {
+        if self.consume("{").is_none() {
+            return Err(self.fail(BLOCK_EXPECTED.into()));
+        }
         let mut stmts = Vec::new();
         loop {
             if self.check_top("}") || self.empty() {
@@ -495,9 +511,9 @@ impl Parser<'_> {
             stmts.push(self.stmt()?);
         }
         if self.consume("}").is_none() {
-            return Err(self.fail("bracket not balanced".into()));
+            return Err(self.fail(BRACKET_NOT_BALANCED.into()));
         }
-        Ok(MultiStmt { stmts: stmts })
+        Ok(Block { stmts: stmts })
     }
     fn stmt(&mut self) -> ParseResult<Statement> {
         if self.consume_expect(|c| c.is_token_parts(), IF).is_some() {
@@ -509,8 +525,8 @@ impl Parser<'_> {
         if self.consume_expect(|c| c.is_token_parts(), WHILE).is_some() {
             return Ok(Statement::While(self.while_()?));
         }
-        if self.consume("{").is_some() {
-            return Ok(Statement::MStmt(self.multi_stmts()?));
+        if self.check_top("{") {
+            return Ok(Statement::MStmt(self.block()?));
         }
         let expr = self.expr()?;
         if self.consume(";").is_none() {
@@ -518,23 +534,67 @@ impl Parser<'_> {
         }
         return Ok(Statement::Stmt(Stmt { expr }));
     }
+    fn find_type(&mut self) -> Option<Type> {
+        let ty = TYPES.iter().fold(None, |acc, cur| match acc {
+            None => self.consume(cur),
+            Some(some) => Some(some),
+        })?;
+        match ty.as_str() {
+            INT => Some(Type::Int),
+            _ => None,
+        }
+    }
+    fn parenthesized<T>(&mut self, f: fn() -> ParseResult<T>) -> ParseResult<T> {
+        if self.consume("(").is_none() {
+            return Err(self.fail("parenthesis expected".into()));
+        }
+        let ret = f()?;
+        if self.consume(")").is_none() {
+            return Err(self.fail("parenthesis unbalanced".into()));
+        }
+        Ok(ret)
+    }
+    fn arg(&mut self) -> ParseResult<i32> {
+        self.parenthesized(|| Ok(1))
+    }
+    fn fdef(&mut self) -> ParseResult<Fdef> {
+        let type_ = self.find_type();
+        if type_.is_none() {
+            return Err(self.fail("type declaration required for function".into()));
+        }
+        let ident = self.get_ident();
+        if ident.is_none() {
+            return Err(self.fail("function name not found".into()));
+        }
+        let _args = self.arg();
+        let mut child = Parser {
+            index: self.index,
+            input: self.input,
+            ident_count: 0,
+            idents: HashMap::new(),
+            read_lines: self.read_lines,
+            line_index: self.line_index,
+        };
+        let fimpl = child.block()?;
+        self.index = child.index;
+        self.read_lines = child.read_lines;
+        self.line_index = child.line_index;
+
+        Ok(Fdef {
+            ident: ident.unwrap(),
+            fimpl: fimpl,
+            required_memory: child.ident_count * IDENTITY_OFFSET,
+        })
+    }
     fn program(&mut self) -> ParseResult<Program> {
-        let mut stmts = Vec::new();
+        let mut fdefs = Vec::new();
         loop {
             if self.empty() {
                 break;
             }
-            match self.stmt() {
-                Ok(s) => {
-                    stmts.push(s);
-                }
-                Err(s) => return Err(s),
-            }
+            fdefs.push(self.fdef()?);
         }
-        Ok(Program {
-            stmt: stmts,
-            required_memory: self.ident_count * IDENTITY_OFFSET,
-        })
+        Ok(Program { fdefs: fdefs })
     }
     fn parse(&mut self) -> ParseResult<Program> {
         self.program()
