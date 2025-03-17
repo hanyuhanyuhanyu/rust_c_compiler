@@ -26,14 +26,19 @@ pub enum Type {
 #[derive(Debug)]
 pub struct Fcall {
     pub ident: String,
-    // pub args: Vec<Ident>,
+    pub args: Vec<Expr>,
+}
+#[derive(Debug)]
+pub struct Arg {
+    pub ident: String,
+    pub offset: usize,
 }
 #[derive(Debug)]
 pub struct Fdef {
     // pub type_: Type,
     pub ident: String,
     pub fimpl: Block,
-    // pub args: Vec<Ident>,
+    pub args: Vec<Arg>,
     pub required_memory: usize,
 }
 #[derive(Debug)]

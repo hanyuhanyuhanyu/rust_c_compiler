@@ -1,6 +1,8 @@
+use crate::compiler::consts::IDENTITY_OFFSET;
+
 use super::node::{
-    Add, AddSub, Assign, Compare, Equality, Equals, Expr, Fcall, Fdef, For, If, Lvar, Mul, MulDiv,
-    Primary, PrimaryNode, Program, Relational, Statement, Unary, While,
+    Add, AddSub, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For, If, Lvar, Mul,
+    MulDiv, Primary, PrimaryNode, Program, Relational, Statement, Unary, While,
 };
 type GenResult = Result<Vec<String>, Vec<String>>;
 fn concat(l: GenResult, r: GenResult) -> GenResult {
@@ -36,7 +38,18 @@ impl Generator<'_> {
         label
     }
     fn fcall(&mut self, f: &Fcall) -> GenResult {
-        Ok(vec![format!("call {}", f.ident,), "push rax".into()])
+        let mut lines = Vec::new();
+        for a in f.args.iter() {
+            lines.extend(self.expr(&a)?);
+        }
+        lines.push(format!("call {}", f.ident,));
+        // 引数はrbpの前に積む、という方針だったので、それらをpopして捨てる
+        // FIXME: この方針でいいのか？
+        for _ in f.args.iter() {
+            lines.push(format!("pop rdi"));
+        }
+        lines.push("push rax".into());
+        Ok(lines)
     }
     fn primary(&mut self, m: &Primary) -> GenResult {
         match &m.node {
@@ -352,21 +365,43 @@ impl Generator<'_> {
             }
         }
     }
-    fn fimpl(&mut self, f: &Fdef) -> GenResult {
+    fn block(&mut self, b: &Block) -> GenResult {
         let mut lines = Vec::new();
-        for s in f.fimpl.stmts.iter() {
+        for s in b.stmts.iter() {
             let ls = self.stmt(s)?;
             lines.extend(ls);
         }
         Ok(lines)
     }
     fn prologue(&mut self, f: &Fdef) -> GenResult {
+        // 引数を頭から順に入れたらstackには逆順に入っているはず
+        let args: Vec<Vec<String>> = f
+            .args
+            .iter()
+            .rev()
+            .map(|a| {
+                // 引数はrbpの上に積まれているのでそこから取る。
+                // FIXME: それでええんか？
+                vec![
+                    "mov rax, rbp".into(),
+                    format!("add rax, {}", a.offset + IDENTITY_OFFSET), // リターナドレスの分で8余分に動かす
+                    "mov rdi, [rax]".into(),
+                    "mov rax, rbp".into(),
+                    format!("sub rax, {}", a.offset),
+                    "mov [rax], rdi".into(),
+                ]
+            })
+            .collect();
         Ok(vec![
-            format!("{}:", f.ident),
-            "push rbp #prlg ->".into(),
-            "mov rbp, rsp".into(),
-            format!("sub rsp, {} {}", f.required_memory, "#<- prlg"),
-        ])
+            vec![
+                format!("{}:", f.ident),
+                "push rbp #prlg ->".into(),
+                "mov rbp, rsp".into(),
+                format!("sub rsp, {} {}", f.required_memory, "#<- prlg"),
+            ],
+            args.concat(),
+        ]
+        .concat())
     }
     fn epilogue(&mut self) -> GenResult {
         Ok(vec![
@@ -381,7 +416,7 @@ impl Generator<'_> {
         for f in self.p.fdefs.iter() {
             genr = concat(
                 genr,
-                concat_multi(&[self.prologue(f), self.fimpl(f), self.epilogue()]),
+                concat_multi(&[self.prologue(f), self.block(&f.fimpl), self.epilogue()]),
             );
         }
         genr

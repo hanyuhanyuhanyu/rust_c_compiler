@@ -1,19 +1,16 @@
 use std::collections::HashMap;
 
-use super::node::{
-    Add, AddSub, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For, Ident, If, Lvar,
-    Mul, MulDiv, Primary, PrimaryNode, Program, Relational, Statement, Stmt, Type, Unary, While,
+use super::{
+    consts::{
+        BLOCK_EXPECTED, BRACKET_NOT_BALANCED, FOR, IDENTITY_OFFSET, IDENTITY_WANTED, IF, RETURN,
+        TYPE_WANTED, TYPES, WHILE,
+    },
+    node::{
+        Add, AddSub, Arg, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For, Ident,
+        If, Lvar, Mul, MulDiv, Primary, PrimaryNode, Program, Relational, Statement, Stmt, Type,
+        Unary, While,
+    },
 };
-const IDENTITY_OFFSET: usize = 8;
-const RETURN: &str = "return";
-const IF: &str = "if";
-const WHILE: &str = "while";
-const FOR: &str = "for";
-const INT: &str = "int";
-const TYPES: [&str; 1] = [INT];
-const BLOCK_EXPECTED: &str = "block begin { expected";
-const BRACKET_NOT_BALANCED: &str = "bracket{} not balanced";
-
 #[derive(Debug)]
 pub struct ParseFailure {
     pub index: usize,
@@ -207,7 +204,7 @@ impl Parser<'_> {
         let offset = match self.idents.get(&ident) {
             None => {
                 self.ident_count += 1;
-                let o = self.ident_count * 8;
+                let o = self.ident_count * IDENTITY_OFFSET;
                 self.idents.insert(ident, o);
                 o
             }
@@ -216,14 +213,30 @@ impl Parser<'_> {
 
         Ok(Primary {
             ope,
-            node: PrimaryNode::Lv(Lvar::Id(Ident { offset: offset })),
+            node: PrimaryNode::Lv(Lvar::Id(Ident { offset })),
         })
     }
     fn fcall(&mut self, ope: Option<AddSub>, ident: String) -> ParseResult<Primary> {
-        let _args = self.parenthesized(|| Ok(1))?;
+        if self.consume("(").is_none() {
+            return Err(self.fail("parenthesis expected".into()));
+        }
+        let mut args = Vec::new();
+        loop {
+            if self.check_top(")") || self.empty() {
+                break;
+            }
+            args.push(self.expr()?);
+            if self.consume(",").is_none() {
+                break;
+            }
+        }
+
+        if self.consume(")").is_none() {
+            return Err(self.fail("parenthesis unbalanced".into()));
+        }
         Ok(Primary {
             ope,
-            node: PrimaryNode::Fcall(Fcall { ident }),
+            node: PrimaryNode::Fcall(Fcall { ident, args }),
         })
     }
     fn primary(&mut self, ope: Option<AddSub>) -> ParseResult<Primary> {
@@ -270,7 +283,7 @@ impl Parser<'_> {
         }
         let mut eq = Mul {
             first: first.unwrap(),
-            ope: ope,
+            ope,
             unarys: Vec::new(),
         };
         loop {
@@ -540,38 +553,63 @@ impl Parser<'_> {
             Some(some) => Some(some),
         })?;
         match ty.as_str() {
-            INT => Some(Type::Int),
-            _ => None,
+            // INT => Some(Type::Int),
+            // _ => None,
+            _ => Some(Type::Int),
         }
     }
-    fn parenthesized<T>(&mut self, f: fn() -> ParseResult<T>) -> ParseResult<T> {
+    fn args(&mut self) -> ParseResult<Vec<Arg>> {
         if self.consume("(").is_none() {
             return Err(self.fail("parenthesis expected".into()));
         }
-        let ret = f()?;
+        let mut args = Vec::new();
+        let mut count = 0;
+        loop {
+            if self.check_top(")") || self.empty() {
+                break;
+            }
+            let type_ = self.find_type();
+            if type_.is_none() {
+                return Err(self.fail(TYPE_WANTED.into()));
+            }
+            let ident = self.get_ident();
+            if ident.is_none() {
+                return Err(self.fail(IDENTITY_WANTED.into()));
+            }
+            count += 1;
+            args.push(Arg {
+                ident: ident.unwrap(),
+                offset: count * IDENTITY_OFFSET,
+            });
+            if self.consume(",").is_none() {
+                break;
+            }
+        }
+
         if self.consume(")").is_none() {
             return Err(self.fail("parenthesis unbalanced".into()));
         }
-        Ok(ret)
-    }
-    fn arg(&mut self) -> ParseResult<i32> {
-        self.parenthesized(|| Ok(1))
+        Ok(args)
     }
     fn fdef(&mut self) -> ParseResult<Fdef> {
         let type_ = self.find_type();
         if type_.is_none() {
-            return Err(self.fail("type declaration required for function".into()));
+            return Err(self.fail(TYPE_WANTED.into()));
         }
         let ident = self.get_ident();
         if ident.is_none() {
-            return Err(self.fail("function name not found".into()));
+            return Err(self.fail(IDENTITY_WANTED.into()));
         }
-        let _args = self.arg();
+        let args = self.args()?;
+        let mut idents = HashMap::new();
+        for arg in args.iter() {
+            idents.insert(arg.ident.clone(), arg.offset);
+        }
         let mut child = Parser {
             index: self.index,
             input: self.input,
-            ident_count: 0,
-            idents: HashMap::new(),
+            ident_count: args.len(),
+            idents,
             read_lines: self.read_lines,
             line_index: self.line_index,
         };
@@ -582,7 +620,8 @@ impl Parser<'_> {
 
         Ok(Fdef {
             ident: ident.unwrap(),
-            fimpl: fimpl,
+            fimpl,
+            args,
             required_memory: child.ident_count * IDENTITY_OFFSET,
         })
     }
