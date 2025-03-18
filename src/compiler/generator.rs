@@ -69,13 +69,10 @@ impl Generator<'_> {
                 return self.primary(&u.prim);
             }
             _ => {
-                let prim = self.primary(&u.prim);
-                if prim.is_err() {
-                    return prim;
-                }
+                let prim = self.primary(&u.prim)?;
                 Ok([
-                    prim.unwrap(),
-                    vec!["push 0", "pop rdi", "pop rax", "sub rdi, rax", "push rax"]
+                    prim,
+                    vec!["push 0", "pop rdi", "pop rax", "sub rdi, rax", "push rdi"]
                         .iter()
                         .map(|s| s.to_string())
                         .collect(),

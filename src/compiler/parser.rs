@@ -164,18 +164,10 @@ impl Parser<'_> {
         }
     }
     fn p_exp(&mut self, ope: Option<AddSub>) -> ParseResult<Primary> {
-        match self.expr() {
-            Err(e) => Err(e),
-            Ok(e) => {
-                if self.consume(")").is_none() {
-                    return Err(self.fail("parenthesis unbalanced".into()));
-                }
-                Ok(Primary {
-                    ope: ope,
-                    node: PrimaryNode::Expr(Box::new(e)),
-                })
-            }
-        }
+        Ok(Primary {
+            ope,
+            node: PrimaryNode::Expr(Box::new(self.parenthesized(|p| p.expr())?)),
+        })
     }
     fn p_num(&mut self, ope: Option<AddSub>) -> ParseResult<Primary> {
         self.space();
@@ -217,23 +209,13 @@ impl Parser<'_> {
         })
     }
     fn fcall(&mut self, ope: Option<AddSub>, ident: String) -> ParseResult<Primary> {
-        if self.consume("(").is_none() {
-            return Err(self.fail("parenthesis expected".into()));
-        }
-        let mut args = Vec::new();
-        loop {
-            if self.check_top(")") || self.empty() {
-                break;
-            }
-            args.push(self.expr()?);
-            if self.consume(",").is_none() {
-                break;
-            }
-        }
-
-        if self.consume(")").is_none() {
-            return Err(self.fail("parenthesis unbalanced".into()));
-        }
+        let args = self.parenthesized(|p| {
+            p.loop_while(
+                |p, _| !p.check_top(")") && !p.empty(),
+                |p, _| p.consume(",").is_some(),
+                |p, _| p.expr(),
+            )
+        })?;
         Ok(Primary {
             ope,
             node: PrimaryNode::Fcall(Fcall { ident, args }),
@@ -243,7 +225,7 @@ impl Parser<'_> {
         if self.empty() {
             return Err(self.fail("number or ( expected".into()));
         }
-        if self.consume("(").is_some() {
+        if self.check_top("(") {
             return self.p_exp(ope);
         }
         // 0-9なら数値と決めつけてよいかは疑問の余地あり
@@ -271,145 +253,97 @@ impl Parser<'_> {
         } else {
             None
         };
-        match self.primary(addsub) {
-            Ok(p) => Ok(Unary { ope: ope, prim: p }),
-            Err(e) => Err(e),
-        }
+        Ok(Unary {
+            ope,
+            prim: self.primary(addsub)?,
+        })
     }
     fn mul(&mut self, ope: Option<AddSub>) -> ParseResult<Mul> {
-        let first = self.unary(None);
-        if first.is_err() {
-            return Err(first.unwrap_err());
-        }
-        let mut eq = Mul {
-            first: first.unwrap(),
-            ope,
-            unarys: Vec::new(),
-        };
-        loop {
-            if self.empty() {
-                break;
-            }
-            let ope = if self.consume("*").is_some() {
-                Some(MulDiv::Multi)
-            } else if self.consume("/").is_some() {
-                Some(MulDiv::Divide)
-            } else {
-                None
-            };
-            if ope.is_none() {
-                break;
-            }
-            match self.unary(ope) {
-                Err(e) => {
-                    return Err(e);
-                }
-                Ok(res) => eq.unarys.push(res),
-            }
-        }
-        Ok(eq)
+        // 一般化したい
+        let first = self.unary(None)?;
+        let unarys = self.loop_while(
+            |p, _| !p.empty() && (p.check_top("/") || p.check_top("*")),
+            |_, _| true,
+            |p, _| {
+                let ope = if p.consume("*").is_some() {
+                    Some(MulDiv::Multi)
+                } else if p.consume("/").is_some() {
+                    Some(MulDiv::Divide)
+                } else {
+                    return Err(p.fail("compiler bug, * or / must be here".into()));
+                };
+                p.unary(ope)
+            },
+        )?;
+        Ok(Mul { first, ope, unarys })
     }
     fn add(&mut self, ope: Option<Compare>) -> ParseResult<Add> {
-        let first = self.mul(None);
-        if first.is_err() {
-            return Err(first.unwrap_err());
-        }
-        let mut eq = Add {
-            first: first.unwrap(),
+        let first = self.mul(None)?;
+        let muls = self.loop_while(
+            |p, _| !p.empty() && (p.check_top("+") || p.check_top("-")),
+            |_, _| true,
+            |p, _| {
+                let ope = if p.consume("+").is_some() {
+                    Some(AddSub::Plus)
+                } else if p.consume("-").is_some() {
+                    Some(AddSub::Minus)
+                } else {
+                    return Err(p.fail("compiler bug, + or - must be here".into()));
+                };
+                p.mul(ope)
+            },
+        )?;
+        Ok(Add {
+            first,
             ope: ope,
-            muls: Vec::new(),
-        };
-        loop {
-            if self.empty() {
-                break;
-            }
-            let ope = if self.consume("+").is_some() {
-                Some(AddSub::Plus)
-            } else if self.consume("-").is_some() {
-                Some(AddSub::Minus)
-            } else {
-                None
-            };
-            if ope.is_none() {
-                break;
-            }
-            match self.mul(ope) {
-                Err(e) => {
-                    return Err(e);
-                }
-                Ok(res) => eq.muls.push(res),
-            }
-        }
-        Ok(eq)
+            muls,
+        })
     }
     fn relational(&mut self, ope: Option<Equals>) -> ParseResult<Relational> {
-        let first = self.add(None);
-        if first.is_err() {
-            return Err(first.unwrap_err());
-        }
-        let mut eq = Relational {
-            first: first.unwrap(),
-            ope: ope,
-            adds: Vec::new(),
+        let first = self.add(None)?;
+        let checker = |p: &mut Self, _| {
+            !p.empty()
+                && (p.check_top(">=") || p.check_top("<=") || p.check_top(">") || p.check_top("<"))
         };
-        loop {
-            if self.empty() {
-                break;
-            }
-            let ope = if self.consume(">=").is_some() {
-                Some(Compare::Gte)
-            } else if self.consume("<=").is_some() {
-                Some(Compare::Lte)
-            } else if self.consume("<").is_some() {
-                Some(Compare::Lt)
-            } else if self.consume(">").is_some() {
-                Some(Compare::Gt)
-            } else {
-                None
-            };
-            if ope.is_none() {
-                break;
-            }
-            match self.add(ope) {
-                Err(e) => {
-                    return Err(e);
-                }
-                Ok(res) => eq.adds.push(res),
-            }
-        }
-        Ok(eq)
+        let adds = self.loop_while(
+            checker,
+            |_, _| true,
+            |p, _| {
+                let ope = if p.consume(">=").is_some() {
+                    Some(Compare::Gte)
+                } else if p.consume("<=").is_some() {
+                    Some(Compare::Lte)
+                } else if p.consume("<").is_some() {
+                    Some(Compare::Lt)
+                } else if p.consume(">").is_some() {
+                    Some(Compare::Gt)
+                } else {
+                    return Err(p.fail("compiler bug, >=  or <= or > or < must be here".into()));
+                };
+                p.add(ope)
+            },
+        )?;
+
+        Ok(Relational { first, ope, adds })
     }
     fn equality(&mut self) -> ParseResult<Equality> {
-        let first = self.relational(None);
-        if first.is_err() {
-            return Err(first.unwrap_err());
-        }
-        let mut eq = Equality {
-            first: first.unwrap(),
-            relationals: Vec::new(),
-        };
-        loop {
-            if self.empty() {
-                break;
-            }
-            let ope = if self.consume("==").is_some() {
-                Some(Equals::Equal)
-            } else if self.consume("!=").is_some() {
-                Some(Equals::NotEqual)
-            } else {
-                None
-            };
-            if ope.is_none() {
-                break;
-            }
-            match self.relational(ope) {
-                Err(e) => {
-                    return Err(e);
-                }
-                Ok(res) => eq.relationals.push(res),
-            }
-        }
-        Ok(eq)
+        let first = self.relational(None)?;
+        let checker = |p: &mut Self, _| !p.empty() && (p.check_top("==") || p.check_top("!="));
+        let relationals = self.loop_while(
+            checker,
+            |_, _| true,
+            |p, _| {
+                let ope = if p.consume("==").is_some() {
+                    Some(Equals::Equal)
+                } else if p.consume("!=").is_some() {
+                    Some(Equals::NotEqual)
+                } else {
+                    return Err(p.fail("compiler bug, >=  or <= or > or < must be here".into()));
+                };
+                p.relational(ope)
+            },
+        )?;
+        Ok(Equality { first, relationals })
     }
     fn assign(&mut self) -> ParseResult<Assign> {
         let eq = self.equality();
@@ -441,13 +375,7 @@ impl Parser<'_> {
         }
     }
     fn while_(&mut self) -> ParseResult<While> {
-        if self.consume("(").is_none() {
-            return Err(self.fail("( expected before 'while'".into()));
-        }
-        let cond = self.expr()?;
-        if self.consume(")").is_none() {
-            return Err(self.fail(") expected after 'while'".into()));
-        }
+        let cond = self.parenthesized(|p| p.expr())?;
         let stmt = self.stmt()?;
         Ok(While {
             cond,
@@ -456,7 +384,7 @@ impl Parser<'_> {
     }
     fn for_(&mut self) -> ParseResult<For> {
         if self.consume("(").is_none() {
-            return Err(self.fail("( expected before 'for'".into()));
+            return Err(self.fail("( expected after 'for'".into()));
         }
         let init = if self.check_top(";") {
             None
@@ -490,13 +418,7 @@ impl Parser<'_> {
         })
     }
     fn if_(&mut self) -> ParseResult<If> {
-        if self.consume("(").is_none() {
-            return Err(self.fail("( expected before 'if'".into()));
-        }
-        let cond = self.expr()?;
-        if self.consume(")").is_none() {
-            return Err(self.fail(") expected after 'if'".into()));
-        }
+        let cond = self.parenthesized(|p| p.expr())?;
         let stmt = self.stmt()?;
         if self.consume("else").is_none() {
             Ok(If {
@@ -558,39 +480,63 @@ impl Parser<'_> {
             _ => Some(Type::Int),
         }
     }
-    fn args(&mut self) -> ParseResult<Vec<Arg>> {
+    fn loop_while<T>(
+        &mut self,
+        mut check_on_start: impl FnMut(&mut Self, usize) -> bool,
+        mut check_on_end: impl FnMut(&mut Self, usize) -> bool,
+        mut f: impl FnMut(&mut Self, usize) -> ParseResult<T>,
+    ) -> ParseResult<Vec<T>> {
+        let mut ret = Vec::new();
+        let mut count = 0;
+        loop {
+            if !check_on_start(self, count) {
+                break;
+            }
+            let n = f(self, count);
+            ret.push(n?);
+            if !check_on_end(self, count) {
+                break;
+            }
+            count += 1
+        }
+        Ok(ret)
+    }
+    fn parenthesized<T>(
+        &mut self,
+        mut f: impl FnMut(&mut Self) -> ParseResult<T>,
+    ) -> ParseResult<T> {
         if self.consume("(").is_none() {
             return Err(self.fail("parenthesis expected".into()));
         }
-        let mut args = Vec::new();
-        let mut count = 0;
-        loop {
-            if self.check_top(")") || self.empty() {
-                break;
-            }
-            let type_ = self.find_type();
-            if type_.is_none() {
-                return Err(self.fail(TYPE_WANTED.into()));
-            }
-            let ident = self.get_ident();
-            if ident.is_none() {
-                return Err(self.fail(IDENTITY_WANTED.into()));
-            }
-            count += 1;
-            args.push(Arg {
-                ident: ident.unwrap(),
-                offset: count * IDENTITY_OFFSET,
-            });
-            if self.consume(",").is_none() {
-                break;
-            }
-        }
-
+        let ret = f(self);
         if self.consume(")").is_none() {
             return Err(self.fail("parenthesis unbalanced".into()));
         }
-        Ok(args)
+        ret
     }
+    fn args(&mut self) -> ParseResult<Vec<Arg>> {
+        self.parenthesized(|p| {
+            p.loop_while(
+                |p, _| !p.check_top(")") && !p.empty(),
+                |p, _| p.consume(",").is_some(),
+                |p, count| {
+                    let type_ = p.find_type();
+                    if type_.is_none() {
+                        return Err(p.fail(TYPE_WANTED.into()));
+                    }
+                    let ident = p.get_ident();
+                    if ident.is_none() {
+                        return Err(p.fail(IDENTITY_WANTED.into()));
+                    }
+                    Ok(Arg {
+                        ident: ident.unwrap(),
+                        offset: (count + 1) * IDENTITY_OFFSET,
+                    })
+                },
+            )
+        })
+    }
+
     fn fdef(&mut self) -> ParseResult<Fdef> {
         let type_ = self.find_type();
         if type_.is_none() {
