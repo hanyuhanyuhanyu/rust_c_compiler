@@ -30,8 +30,12 @@ pub struct Parser<'a> {
 }
 trait IsToken {
     fn is_token_parts(self) -> bool;
+    fn is_token_first(self) -> bool;
 }
 impl IsToken for char {
+    fn is_token_first(self) -> bool {
+        self.is_ascii_alphabetic() || self == '_'
+    }
     fn is_token_parts(self) -> bool {
         self.is_ascii_alphanumeric() || self == '_'
     }
@@ -190,7 +194,9 @@ impl Parser<'_> {
         })
     }
     fn get_ident(&mut self) -> Option<String> {
-        self.consume_f(|c| c.is_token_parts())
+        let first = self.top_f(|c| c.is_token_first())?;
+        let tail = self.consume_f(|c| c.is_token_parts()).unwrap_or("".into());
+        Some(format!("{}{}", first, tail))
     }
     fn p_ident(&mut self, ope: Option<AddSub>, ident: String) -> ParseResult<Primary> {
         let offset = match self.idents.get(&ident) {

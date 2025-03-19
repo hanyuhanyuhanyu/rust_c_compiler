@@ -17,7 +17,8 @@ unary = ( "+" | "-" )? primary
 primary = num | ident | fcall | "(" expr ")"  // void funcのことを考えるとこの定義だと困る未来が来そう
 fcall=ident "(" expr? ("," expr)* ")"
 num=[0-9]+
-ident=[a-zA-Z0-9_]+
+ident=identfirst(num | identfirst)*
+identfirst=[a-zA-Z_]
 
 何も考えずにretしているのでvoid funcを表現できない
 未定義関数を呼んでもコンパイルエラーにならない　
