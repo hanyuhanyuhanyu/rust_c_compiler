@@ -22,7 +22,7 @@ assert() {
   $tmp/$file_name
   actual="$?"
   if [ "$actual" = "$expect" ]; then
-    echo "($cnt) ✅️  $actual/ $input"
+    echo "($cnt) ✅️ $actual/ $input"
   else
     echo "($cnt) ❌ want: $expect real: $actual/ $input"
   fi
