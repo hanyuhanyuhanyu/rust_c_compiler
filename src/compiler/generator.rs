@@ -1,4 +1,5 @@
 use crate::compiler::consts::IDENTITY_OFFSET;
+use std::cmp;
 
 use super::node::{
     Add, AddSub, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For, If, Lvar, Mul,
@@ -31,6 +32,7 @@ struct Generator<'a> {
     p: &'a Program,
     jump_count: usize,
 }
+const FARG_REGS: [&str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
 impl Generator<'_> {
     fn jump_label(&mut self) -> String {
         let label = self.jump_count.to_string();
@@ -39,15 +41,18 @@ impl Generator<'_> {
     }
     fn fcall(&mut self, f: &Fcall) -> GenResult {
         let mut lines = Vec::new();
-        for a in f.args.iter() {
-            lines.extend(self.expr(&a)?);
+        for e in f.args.iter().rev() {
+            lines.extend(self.expr(e)?);
+        }
+
+        // 6つまではレジスタ経由。rdi,rsi,rdx,rx,r8,r9の順。
+        // 7つ目以降の引数はrbpの前に逆順で積む
+        for i in 0..(cmp::min(f.args.len(), FARG_REGS.len())) {
+            let register = FARG_REGS.iter().nth(i).unwrap();
+            lines.extend(vec![format!("pop {}", register)]);
         }
         lines.push(format!("call {}", f.ident,));
-        // 引数はrbpの前に積む、という方針だったので、それらをpopして捨てる
-        // FIXME: この方針でいいのか？
-        for _ in f.args.iter() {
-            lines.push(format!("pop rdi"));
-        }
+
         lines.push("push rax".into());
         Ok(lines)
     }
@@ -375,18 +380,28 @@ impl Generator<'_> {
         let args: Vec<Vec<String>> = f
             .args
             .iter()
-            .rev()
-            .map(|a| {
-                // 引数はrbpの上に積まれているのでそこから取る。
-                // FIXME: それでええんか？
-                vec![
-                    "mov rax, rbp".into(),
-                    format!("add rax, {}", a.offset + IDENTITY_OFFSET), // リターナドレスの分で8余分に動かす
-                    "mov rdi, [rax]".into(),
-                    "mov rax, rbp".into(),
-                    format!("sub rax, {}", a.offset),
-                    "mov [rax], rdi".into(),
-                ]
+            .enumerate()
+            .map(|(i, a)| {
+                // 6つまではレジスタ経由。rdi,rsi,rdx,rx,r8,r9の順。
+                if i < FARG_REGS.len() {
+                    let register = FARG_REGS.iter().nth(i).unwrap();
+                    vec![
+                        "mov rax, rbp".into(),
+                        format!("sub rax, {}", a.offset),
+                        format!("mov [rax], {}", register),
+                    ]
+                } else {
+                    // 7つ目以降の引数はrbpの前に逆順で積まれている
+                    let offset = (i + 1 - FARG_REGS.len()) * IDENTITY_OFFSET;
+                    vec![
+                        "mov rax, rbp".into(),
+                        format!("add rax, {}", offset + IDENTITY_OFFSET), // リターンドレスの分で8余分に動かす
+                        "mov rdi, [rax]".into(),
+                        "mov rax, rbp".into(),
+                        format!("sub rax, {}", a.offset),
+                        "mov [rax], rdi".into(),
+                    ]
+                }
             })
             .collect();
         Ok(vec![
