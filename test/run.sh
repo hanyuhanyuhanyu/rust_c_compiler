@@ -8,6 +8,7 @@ if [ ! -z "$1" ]; then
   test_file="${test_file}_$1"
   test_folder="${test_folder}_$1"
 fi
+utils=util/testutil.c
 assert() {
   cnt=$((cnt+1))
   input=$1
@@ -18,9 +19,8 @@ assert() {
   fi
   file_name="output_$cnt"
   cargo run -q -- "$input" > $tmp/$file_name.s
-  cc -z noexecstack -o $tmp/$file_name $tmp/$file_name.s
-  $tmp/$file_name
-  actual="$?"
+  cc -z noexecstack -o $tmp/$file_name $utils $tmp/$file_name.s
+  actual="$($tmp/$file_name)"
   if [ "$actual" = "$expect" ]; then
     echo "($cnt) ✅️ $actual/ $input"
   else
@@ -36,8 +36,8 @@ assert_file() {
   file_name="output_$cnt"
   input="$(head -n -1 $file)" 
   cargo run -q -- "$input"> $tmp/$file_name.s
-  cc -z noexecstack -o $tmp/$file_name $tmp/$file_name.s
-  $tmp/$file_name
+  cc -z noexecstack -o $tmp/$file_name $utils $tmp/$file_name.s
+  $tmp/$file_name > /dev/null
   actual="$?"
   expect="$(tail -n 1 $file)"
   if [ "$actual" = $expect ]; then
