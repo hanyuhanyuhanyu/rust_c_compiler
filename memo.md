@@ -8,12 +8,15 @@ if="if (" expr ")" stmt ("else" stmt)?
 for="for("expr?";"expr?";"expr?")" stmt
 while="while("expr")" stmt
 expr = assign
-assign = equality("=" assign)?
+<!-- assign = equality("=" assign)? -->
+assign = rvar | (lvar "=" expr)
+rvar = equality
+lvar = "*"* ident <!-- equalityのサブセットにする -->
 equality =  relation (("==" | "!=") relational)*
 relational = add (("<" | ">" | "<=" | ">=") add)*
 add = mul ( "+" mul | "-" mul )*
 mul  = unary ( "*" unary | "/" unary )*
-unary = ( "+" | "-" )? primary
+unary = ("*" | "&") unary | ( "+" | "-" )? primary
 primary = num | ident | fcall | "(" expr ")"  // void funcのことを考えるとこの定義だと困る未来が来そう
 fcall=ident "(" expr? ("," expr)* ")"
 num=[0-9]+

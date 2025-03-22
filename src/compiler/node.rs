@@ -88,9 +88,18 @@ pub struct Expr {
     pub ret: bool,
 }
 #[derive(Debug)]
-pub struct Assign {
-    pub lvar: Equality,
-    pub rvar: Option<Box<Assign>>,
+pub struct Rvar {
+    pub eq: Equality,
+}
+#[derive(Debug)]
+pub struct Asgn {
+    pub lvar: Lvar,
+    pub rvar: Box<Expr>,
+}
+#[derive(Debug)]
+pub enum Assign {
+    Rv(Rvar),
+    Asgn(Asgn),
 }
 #[derive(Debug)]
 pub struct Equality {

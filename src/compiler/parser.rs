@@ -6,9 +6,9 @@ use super::{
         TYPE_WANTED, TYPES, WHILE,
     },
     node::{
-        Add, AddSub, Arg, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For, Ident,
-        If, Lvar, Mul, MulDiv, Primary, PrimaryNode, Program, Relational, Statement, Stmt, Type,
-        Unary, While,
+        Add, AddSub, Arg, Asgn, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For,
+        Ident, If, Lvar, Mul, MulDiv, Primary, PrimaryNode, Program, Relational, Rvar, Statement,
+        Stmt, Type, Unary, While,
     },
 };
 #[derive(Debug)]
@@ -351,23 +351,20 @@ impl Parser<'_> {
         )?;
         Ok(Equality { first, relationals })
     }
+    fn rvar(&mut self) -> ParseResult<Equality> {
+        self.equality()
+    }
     fn assign(&mut self) -> ParseResult<Assign> {
-        let eq = self.equality();
-        if eq.is_err() {
-            return Err(eq.unwrap_err());
+        let eq = self.rvar()?;
+        let lvar = eq.lvar();
+        if lvar.is_none() || self.consume("=").is_none() {
+            return Ok(Assign::Rv(Rvar { eq }));
         }
-        if self.consume("=").is_none() {
-            return Ok(Assign {
-                lvar: eq.unwrap(),
-                rvar: None,
-            });
-        }
-        match self.assign() {
-            Ok(a) => Ok(Assign {
-                lvar: eq.unwrap(),
-                rvar: Some(Box::new(a)),
-            }),
-            Err(e) => Err(e),
+        match lvar.unwrap() {
+            Lvar::Id(i) => Ok(Assign::Asgn(Asgn {
+                lvar: Lvar::Id(Ident { offset: i.offset }),
+                rvar: Box::new(self.expr()?),
+            })),
         }
     }
     fn expr(&mut self) -> ParseResult<Expr> {

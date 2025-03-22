@@ -27,7 +27,6 @@ fn concat_multi(results: &[GenResult]) -> GenResult {
     }
     return base;
 }
-const NOT_LVAR_ERR: &str = "left value cannot assingable";
 struct Generator<'a> {
     p: &'a Program,
     jump_count: usize,
@@ -236,30 +235,21 @@ impl Generator<'_> {
         }
     }
     fn assign(&mut self, a: &Assign) -> GenResult {
-        if a.rvar.is_none() {
-            return self.equality(&a.lvar);
-        }
-        match a.lvar.lvar() {
-            None => Err(vec![NOT_LVAR_ERR.into()]),
-            Some(l) => {
-                let l = self.lvar(l);
-                let r = self.assign(a.rvar.as_ref().unwrap());
-                let lines = concat(l, r);
-                match lines {
-                    Err(e) => Err(e),
-                    Ok(ls) => Ok([
-                        ls,
-                        vec![
-                            "pop rdi".into(),
-                            "pop rax".into(),
-                            "mov [rax], rdi".into(),
-                            "push rdi".into(),
-                        ],
-                    ]
-                    .concat()),
-                }
+        return match a {
+            Assign::Rv(r) => self.equality(&r.eq),
+            Assign::Asgn(a) => {
+                let l = self.lvar(&a.lvar)?;
+                let mut r = self.expr(&a.rvar)?;
+                r.extend(l);
+                r.extend(vec![
+                    "pop rax".into(),
+                    "pop rdi".into(),
+                    "mov [rax], rdi".into(),
+                    "push rdi".into(),
+                ]);
+                Ok(r)
             }
-        }
+        };
     }
     fn expr(&mut self, e: &Expr) -> GenResult {
         self.assign(&e.assign)
