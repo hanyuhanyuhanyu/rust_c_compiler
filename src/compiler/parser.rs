@@ -211,7 +211,10 @@ impl Parser<'_> {
 
         Ok(Primary {
             ope,
-            node: PrimaryNode::Lv(Lvar::Id(Ident { offset })),
+            node: PrimaryNode::Lv(Lvar::Id(Ident {
+                // type_: Type::Int,
+                offset: offset,
+            })),
         })
     }
     fn fcall(&mut self, ope: Option<AddSub>, ident: String) -> ParseResult<Primary> {
@@ -360,12 +363,10 @@ impl Parser<'_> {
         if lvar.is_none() || self.consume("=").is_none() {
             return Ok(Assign::Rv(Rvar { eq }));
         }
-        match lvar.unwrap() {
-            Lvar::Id(i) => Ok(Assign::Asgn(Asgn {
-                lvar: Lvar::Id(Ident { offset: i.offset }),
-                rvar: Box::new(self.expr()?),
-            })),
-        }
+        Ok(Assign::Asgn(Asgn {
+            lvar: eq,
+            rvar: Box::new(self.expr()?),
+        }))
     }
     fn expr(&mut self) -> ParseResult<Expr> {
         let ret = self.consume_expect(|c| c.is_token_parts(), RETURN);

@@ -194,14 +194,10 @@ impl Generator<'_> {
         return Ok(lines);
     }
     fn equality(&mut self, eq: &Equality) -> GenResult {
-        let first = self.relational(&eq.first);
-        if first.is_err() {
-            return first;
-        }
+        let mut lines = self.relational(&eq.first)?;
         if eq.relationals.len() == 0 {
-            return first;
+            return Ok(lines);
         }
-        let mut lines = first.unwrap();
         for rel in eq.relationals.iter() {
             if rel.ope.is_none() {
                 return Err(vec!["operator expected".into()]);
@@ -238,7 +234,11 @@ impl Generator<'_> {
         return match a {
             Assign::Rv(r) => self.equality(&r.eq),
             Assign::Asgn(a) => {
-                let l = self.lvar(&a.lvar)?;
+                let lvar = a.lvar.lvar();
+                if lvar.is_none() {
+                    return Err(vec!["expression canoot be assigned".into()]);
+                }
+                let l = self.lvar(lvar.unwrap())?;
                 let mut r = self.expr(&a.rvar)?;
                 r.extend(l);
                 r.extend(vec![

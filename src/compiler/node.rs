@@ -20,8 +20,10 @@ pub enum Equals {
     Equal,
     NotEqual,
 }
+#[derive(Debug)]
 pub enum Type {
     Int,
+    // Ptr(Box<Type>),
 }
 #[derive(Debug)]
 pub struct Fcall {
@@ -93,7 +95,7 @@ pub struct Rvar {
 }
 #[derive(Debug)]
 pub struct Asgn {
-    pub lvar: Lvar,
+    pub lvar: Equality,
     pub rvar: Box<Expr>,
 }
 #[derive(Debug)]
@@ -187,6 +189,7 @@ pub struct Primary {
 }
 #[derive(Debug)]
 pub struct Ident {
+    // pub type_: Type,
     pub offset: usize,
 }
 impl Primary {
