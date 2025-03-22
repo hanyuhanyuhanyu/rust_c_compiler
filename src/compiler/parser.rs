@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use super::{
     consts::{
-        BLOCK_EXPECTED, BRACKET_NOT_BALANCED, FOR, IDENTITY_OFFSET, IDENTITY_WANTED, IF, RETURN,
-        TYPE_WANTED, TYPES, WHILE,
+        BLOCK_EXPECTED, BRACKET_NOT_BALANCED, FOR, IDENTITY_OFFSET, IDENTITY_WANTED, IF, INT,
+        RETURN, TYPE_WANTED, TYPES, WHILE, sizeof,
     },
     node::{
-        Add, AddSub, Arg, Asgn, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For,
-        Ident, If, Lvar, Mul, MulDiv, Primary, PrimaryNode, Program, PtrOpe, Relational, Rvar,
-        Statement, Stmt, Type, Unary, UnaryPtr, UnaryVar, While,
+        Add, AddSub, Asgn, Assign, Block, Compare, Equality, Equals, Expr, ExprAssign, Fcall, Fdef,
+        For, Ident, If, Lvar, Mul, MulDiv, Primary, PrimaryNode, Program, PtrOpe, Relational, Rvar,
+        Statement, Stmt, Type, Unary, UnaryPtr, UnaryVar, VarDef, While,
     },
 };
 #[derive(Debug)]
@@ -23,8 +23,8 @@ pub type ParseResult<T> = Result<T, ParseFailure>;
 pub struct Parser<'a> {
     pub index: usize,
     pub input: &'a String,
-    pub ident_count: usize,
-    pub idents: HashMap<String, usize>,
+    pub required_memory: usize,
+    pub idents: HashMap<String, VarDef>,
     pub read_lines: usize,
     pub line_index: usize,
 }
@@ -199,21 +199,16 @@ impl Parser<'_> {
         Some(format!("{}{}", first, tail))
     }
     fn p_ident(&mut self, ope: Option<AddSub>, ident: String) -> ParseResult<Primary> {
-        let offset = match self.idents.get(&ident) {
-            None => {
-                self.ident_count += 1;
-                let o = self.ident_count * IDENTITY_OFFSET;
-                self.idents.insert(ident, o);
-                o
-            }
-            Some(ofs) => *ofs,
-        };
-
+        let var = self.idents.get(&ident);
+        if var.is_none() {
+            return Err(self.fail(format!("var {} undeclared", ident)));
+        }
         Ok(Primary {
             ope,
             node: PrimaryNode::Lv(Lvar::Id(Ident {
                 // type_: Type::Int,
-                offset: offset,
+                offset: var.unwrap().offset,
+                // refable, refで剥がして良い回数を持ちたい
             })),
         })
     }
@@ -379,13 +374,64 @@ impl Parser<'_> {
             rvar: Box::new(self.expr()?),
         }))
     }
+    fn lvar(&mut self) -> ParseResult<(usize, String)> {
+        let ref_count = self.consume_f(|c| c == '*').unwrap_or("".into()).len();
+        let next_token = self.get_ident();
+        if next_token.is_none() {
+            return Err(self.fail(IDENTITY_WANTED.into()));
+        }
+        Ok((ref_count, next_token.unwrap()))
+    }
+    fn gen_type(&mut self, t: Type, ref_count: usize) -> Type {
+        if ref_count == 0 {
+            t
+        } else {
+            Type::Ptr(())
+            // Type::Ptr(Box::new(self.gen_type(t, ref_count - 1)))
+        }
+    }
+    fn def(&mut self) -> ParseResult<(Vec<VarDef>, Option<Assign>)> {
+        let type_ = self.find_type();
+        if type_.is_none() {
+            return Err(self.fail("type expected".into()));
+        }
+        let vardefs = self.loop_while(
+            |p, _| p.check_top_f(|c| c.is_token_first() || c == '*') && !p.empty(),
+            |p, _| p.consume(",").is_some(),
+            |p, _| {
+                let (ref_count, ident) = p.lvar()?;
+                if p.idents.get(&ident).is_some() {
+                    return Err(p.fail(format!("multi definition for {}", ident)));
+                }
+                let type_ = p.gen_type(type_.clone().unwrap(), ref_count);
+                let memory = sizeof(&type_);
+                p.required_memory += memory;
+                let def = VarDef {
+                    ident: ident.clone(),
+                    offset: p.required_memory,
+                    _type_: type_,
+                    _ref_count_: ref_count,
+                };
+                p.idents.insert(ident.clone(), def.clone());
+                Ok(def)
+            },
+        )?;
+        if self.consume("=").is_none() {
+            return Ok((vardefs, None));
+        }
+        Ok((vardefs, Some(self.assign()?)))
+    }
     fn expr(&mut self) -> ParseResult<Expr> {
+        if self.check_type() {
+            let (a, b) = self.def()?;
+            return Ok(Expr::VarAsgn(a, b));
+        }
         let ret = self.consume_expect(|c| c.is_token_parts(), RETURN);
         match self.assign() {
-            Ok(a) => Ok(Expr {
-                assign: a,
+            Ok(assign) => Ok(Expr::Asgn(ExprAssign {
+                assign,
                 ret: ret.is_some(),
-            }),
+            })),
             Err(e) => Err(e),
         }
     }
@@ -466,6 +512,9 @@ impl Parser<'_> {
         Ok(Block { stmts: stmts })
     }
     fn stmt(&mut self) -> ParseResult<Statement> {
+        if self.consume(";").is_some() {
+            return Ok(Statement::Nothing);
+        }
         if self.consume_expect(|c| c.is_token_parts(), IF).is_some() {
             return Ok(Statement::If(self.if_()?));
         }
@@ -484,15 +533,17 @@ impl Parser<'_> {
         }
         return Ok(Statement::Stmt(Stmt { expr }));
     }
+    fn check_type(&mut self) -> bool {
+        TYPES.iter().any(|t| self.check_top(t))
+    }
     fn find_type(&mut self) -> Option<Type> {
         let ty = TYPES.iter().fold(None, |acc, cur| match acc {
             None => self.consume(cur),
             Some(some) => Some(some),
         })?;
         match ty.as_str() {
-            // INT => Some(Type::Int),
-            // _ => None,
-            _ => Some(Type::Int),
+            INT => Some(Type::Int),
+            _ => None,
         }
     }
     fn loop_while<T>(
@@ -529,7 +580,7 @@ impl Parser<'_> {
         }
         ret
     }
-    fn args(&mut self) -> ParseResult<Vec<Arg>> {
+    fn args(&mut self) -> ParseResult<Vec<VarDef>> {
         self.parenthesized(|p| {
             p.loop_while(
                 |p, _| !p.check_top(")") && !p.empty(),
@@ -539,13 +590,13 @@ impl Parser<'_> {
                     if type_.is_none() {
                         return Err(p.fail(TYPE_WANTED.into()));
                     }
-                    let ident = p.get_ident();
-                    if ident.is_none() {
-                        return Err(p.fail(IDENTITY_WANTED.into()));
-                    }
-                    Ok(Arg {
-                        ident: ident.unwrap(),
-                        offset: (count + 1) * IDENTITY_OFFSET,
+                    let (ref_count, ident) = p.lvar()?;
+
+                    Ok(VarDef {
+                        ident: ident,
+                        _type_: type_.unwrap(),
+                        _ref_count_: ref_count,
+                        offset: (count + 1) * IDENTITY_OFFSET, // TODO 適切な大きさで確保する
                     })
                 },
             )
@@ -564,12 +615,13 @@ impl Parser<'_> {
         let args = self.args()?;
         let mut idents = HashMap::new();
         for arg in args.iter() {
-            idents.insert(arg.ident.clone(), arg.offset);
+            idents.insert(arg.ident.clone(), arg.clone());
         }
+
         let mut child = Parser {
             index: self.index,
             input: self.input,
-            ident_count: args.len(),
+            required_memory: args.last().map_or(0, |v| v.offset),
             idents,
             read_lines: self.read_lines,
             line_index: self.line_index,
@@ -583,7 +635,7 @@ impl Parser<'_> {
             ident: ident.unwrap(),
             fimpl,
             args,
-            required_memory: child.ident_count * IDENTITY_OFFSET,
+            required_memory: child.required_memory,
         })
     }
     fn program(&mut self) -> ParseResult<Program> {
@@ -604,7 +656,7 @@ pub fn parse(input: &String) -> ParseResult<Program> {
     Parser {
         input: input,
         index: 0,
-        ident_count: 0,
+        required_memory: 0,
         line_index: 0,
         idents: HashMap::new(),
         read_lines: 0,

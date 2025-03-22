@@ -309,7 +309,27 @@ impl Generator<'_> {
         };
     }
     fn expr(&mut self, e: &Expr) -> GenResult {
-        self.assign(&e.assign)
+        match e {
+            Expr::Asgn(ea) => self.assign(&ea.assign),
+            Expr::VarAsgn(def, assign) => {
+                let mut l = vec![];
+                if assign.is_none() {
+                    l.push("push 0".into());
+                }
+                if assign.is_some() {
+                    l.extend(self.assign(assign.as_ref().unwrap())?);
+                };
+                l.push("pop rdi".into());
+                for v in def.iter() {
+                    l.extend(vec![
+                        "mov rax, rbp".into(),
+                        format!("sub rax, {}", v.offset),
+                        "mov [rax], rdi".into(),
+                    ]);
+                }
+                Ok(l)
+            }
+        }
     }
     fn for_(&mut self, f: &For) -> GenResult {
         let init = match &f.init {
@@ -395,6 +415,7 @@ impl Generator<'_> {
     }
     fn stmt(&mut self, stmt: &Statement) -> GenResult {
         match stmt {
+            Statement::Nothing => Ok(vec![]),
             Statement::If(i) => self.if_(i),
             Statement::While(w) => self.while_(w),
             Statement::For(f) => self.for_(f),
@@ -406,7 +427,7 @@ impl Generator<'_> {
                 .unwrap_or(Ok(vec![])),
             Statement::Stmt(s) => {
                 let lines = self.expr(&s.expr)?;
-                if s.expr.ret {
+                if s.expr.does_return() {
                     Ok([lines, self.epilogue()?].concat())
                 } else {
                     Ok(lines)

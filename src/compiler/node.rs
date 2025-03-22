@@ -20,10 +20,10 @@ pub enum Equals {
     Equal,
     NotEqual,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Type {
     Int,
-    // Ptr(Box<Type>),
+    Ptr(()),
 }
 #[derive(Debug)]
 pub struct Fcall {
@@ -31,16 +31,11 @@ pub struct Fcall {
     pub args: Vec<Expr>,
 }
 #[derive(Debug)]
-pub struct Arg {
-    pub ident: String,
-    pub offset: usize,
-}
-#[derive(Debug)]
 pub struct Fdef {
     // pub type_: Type,
     pub ident: String,
     pub fimpl: Block,
-    pub args: Vec<Arg>,
+    pub args: Vec<VarDef>,
     pub required_memory: usize,
 }
 #[derive(Debug)]
@@ -83,9 +78,23 @@ pub enum Statement {
     While(While),
     Stmt(Stmt),
     MStmt(Block),
+    Nothing,
 }
 #[derive(Debug)]
-pub struct Expr {
+pub enum Expr {
+    Asgn(ExprAssign),
+    VarAsgn(Vec<VarDef>, Option<Assign>),
+}
+impl Expr {
+    pub fn does_return(&self) -> bool {
+        match self {
+            Expr::Asgn(e) => e.ret,
+            _ => false,
+        }
+    }
+}
+#[derive(Debug)]
+pub struct ExprAssign {
     pub assign: Assign,
     pub ret: bool,
 }
@@ -98,6 +107,14 @@ pub struct Asgn {
     pub lvar: Equality,
     pub rvar: Box<Expr>,
 }
+#[derive(Debug, Clone)]
+pub struct VarDef {
+    pub ident: String,
+    pub _type_: Type,
+    pub _ref_count_: usize,
+    pub offset: usize,
+}
+
 #[derive(Debug)]
 pub enum Assign {
     Rv(Rvar),
