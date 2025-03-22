@@ -1,10 +1,13 @@
-use crate::compiler::consts::IDENTITY_OFFSET;
 use std::cmp;
+
+use crate::compiler::consts::IDENTITY_OFFSET;
 
 use super::node::{
     Add, AddSub, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For, If, Lvar, Mul,
-    MulDiv, Primary, PrimaryNode, Program, Relational, Statement, Unary, While,
+    MulDiv, Primary, PrimaryNode, Program, PtrOpe, Relational, Statement, Unary, While,
 };
+const PUSH_REF: &str = "push [rax]";
+const PUSH_VAL: &str = "push rax";
 type GenResult = Result<Vec<String>, Vec<String>>;
 fn concat(l: GenResult, r: GenResult) -> GenResult {
     if l.is_err() {
@@ -52,7 +55,7 @@ impl Generator<'_> {
         }
         lines.push(format!("call {}", f.ident,));
 
-        lines.push("push rax".into());
+        lines.push(PUSH_VAL.into());
         Ok(lines)
     }
     fn primary(&mut self, m: &Primary) -> GenResult {
@@ -63,28 +66,72 @@ impl Generator<'_> {
             PrimaryNode::Lv(Lvar::Id(i)) => Ok(vec![
                 "mov rax, rbp".into(),
                 format!("sub rax, {}", i.offset),
-                "push [rax]".into(),
+                PUSH_REF.into(),
             ]),
         }
     }
     fn unary(&mut self, u: &Unary) -> GenResult {
-        match u.prim.ope {
-            None | Some(AddSub::Plus) => {
-                return self.primary(&u.prim);
+        match u {
+            Unary::Ptr(p) => {
+                let mut pri = self.unary(&p.unary)?;
+                let last = pri.last();
+                if last.is_none() {
+                    return Err(vec![
+                        "compiler buf: primary calc returned empty vector".into(),
+                    ]);
+                }
+                match p.ope {
+                    PtrOpe::Ref => Ok([pri, vec!["pop rax".into(), PUSH_REF.into()]].concat()),
+                    PtrOpe::Deref => {
+                        return if last.unwrap().eq(PUSH_REF) {
+                            let len = pri.len() - 1;
+                            pri[len] = PUSH_VAL.into();
+                            Ok(pri)
+                        } else {
+                            Err(vec!["cannot handle multiple dereference".into()])
+                        };
+                    }
+                }
             }
-            _ => {
-                let prim = self.primary(&u.prim)?;
-                Ok([
-                    prim,
-                    vec!["push 0", "pop rdi", "pop rax", "sub rdi, rax", "push rdi"]
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect(),
-                ]
-                .concat())
+            Unary::Var(v) => {
+                let pri = self.primary(&v.prim)?;
+                match v.prim.ope {
+                    None | Some(AddSub::Plus) => {
+                        return Ok(pri);
+                    }
+                    _ => {
+                        return Ok([
+                            pri,
+                            vec!["push 0", "pop rdi", "pop rax", "sub rdi, rax", "push rdi"]
+                                .iter()
+                                .map(|s| s.to_string())
+                                .collect(),
+                        ]
+                        .concat());
+                    }
+                }
             }
         }
     }
+    // fn unary(&mut self, u: &Unary) -> GenResult {
+    //     let pri = self.unwrap_ref(u);
+    //     match pri.prim.ope {
+    //         None | Some(AddSub::Plus) => {
+    //             return self.primary(&pri.prim);
+    //         }
+    //         _ => {
+    //             let prim = self.primary(&pri.prim)?;
+    //             Ok([
+    //                 prim,
+    //                 vec!["push 0", "pop rdi", "pop rax", "sub rdi, rax", "push rdi"]
+    //                     .iter()
+    //                     .map(|s| s.to_string())
+    //                     .collect(),
+    //             ]
+    //             .concat())
+    //         }
+    //     }
+    // }
     fn mul(&mut self, m: &Mul) -> GenResult {
         let first = self.unary(&m.first);
         if first.is_err() {
@@ -95,7 +142,8 @@ impl Generator<'_> {
         }
         let mut lines = first.unwrap();
         for u in m.unarys.iter() {
-            if u.ope.is_none() {
+            let ope = u.ope();
+            if ope.is_none() {
                 return Err(vec!["operator expected".into()]);
             }
             let second = self.unary(u);
@@ -105,7 +153,7 @@ impl Generator<'_> {
             lines.extend(second.unwrap());
             lines.push("pop rdi".into());
             lines.push("pop rax".into());
-            match u.ope.as_ref().unwrap() {
+            match ope.as_ref().unwrap() {
                 MulDiv::Multi => {
                     lines.push("imul rax,rdi".into());
                 }
@@ -221,14 +269,22 @@ impl Generator<'_> {
         return Ok(lines);
     }
 
-    fn lvar(&mut self, e: &Lvar) -> GenResult {
-        match e {
-            Lvar::Id(i) => Ok(vec![
-                "mov rax, rbp".into(),
-                format!("sub rax, {}", i.offset),
-                "push rax".into(),
-            ]),
-        }
+    fn lvar(&mut self, e: &Lvar, ref_count: usize) -> GenResult {
+        Ok(if ref_count <= 0 {
+            match e {
+                Lvar::Id(i) => vec![
+                    "mov rax, rbp".into(),
+                    format!("sub rax, {}", i.offset),
+                    "push rax".into(),
+                ],
+            }
+        } else {
+            [
+                self.lvar(e, ref_count - 1)?,
+                vec!["pop rax".into(), PUSH_REF.into()],
+            ]
+            .concat()
+        })
     }
     fn assign(&mut self, a: &Assign) -> GenResult {
         return match a {
@@ -238,7 +294,8 @@ impl Generator<'_> {
                 if lvar.is_none() {
                     return Err(vec!["expression canoot be assigned".into()]);
                 }
-                let l = self.lvar(lvar.unwrap())?;
+                let (lv, count) = lvar.unwrap();
+                let l = self.lvar(lv, count)?;
                 let mut r = self.expr(&a.rvar)?;
                 r.extend(l);
                 r.extend(vec![

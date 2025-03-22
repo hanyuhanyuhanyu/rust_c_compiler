@@ -109,7 +109,7 @@ pub struct Equality {
     pub relationals: Vec<Relational>,
 }
 impl Equality {
-    pub fn lvar(&self) -> Option<&Lvar> {
+    pub fn lvar(&self) -> Option<(&Lvar, usize)> {
         if self.relationals.len() > 0 {
             return None;
         }
@@ -123,7 +123,7 @@ pub struct Relational {
     pub adds: Vec<Add>,
 }
 impl Relational {
-    fn lvar(&self) -> Option<&Lvar> {
+    fn lvar(&self) -> Option<(&Lvar, usize)> {
         if self.ope.is_some() || self.adds.len() > 0 {
             return None;
         }
@@ -137,7 +137,7 @@ pub struct Add {
     pub muls: Vec<Mul>,
 }
 impl Add {
-    fn lvar(&self) -> Option<&Lvar> {
+    fn lvar(&self) -> Option<(&Lvar, usize)> {
         if self.ope.is_some() || self.muls.len() > 0 {
             return None;
         }
@@ -151,24 +151,48 @@ pub struct Mul {
     pub unarys: Vec<Unary>,
 }
 impl Mul {
-    fn lvar(&self) -> Option<&Lvar> {
+    fn lvar(&self) -> Option<(&Lvar, usize)> {
         if self.ope.is_some() || self.unarys.len() > 0 {
             return None;
         }
-        self.first.lvar()
+        self.first.lvar(0)
     }
 }
 #[derive(Debug)]
-pub struct Unary {
+pub enum PtrOpe {
+    Ref,
+    Deref,
+}
+#[derive(Debug)]
+pub struct UnaryPtr {
+    pub ope: PtrOpe,
+    pub unary: Box<Unary>,
+}
+#[derive(Debug)]
+pub struct UnaryVar {
     pub ope: Option<MulDiv>,
     pub prim: Primary,
 }
+#[derive(Debug)]
+pub enum Unary {
+    Ptr(UnaryPtr),
+    Var(UnaryVar),
+}
 impl Unary {
-    fn lvar(&self) -> Option<&Lvar> {
-        if self.ope.is_some() {
-            return None;
+    fn lvar(&self, ref_count: usize) -> Option<(&Lvar, usize)> {
+        match self {
+            Unary::Var(p) => p.prim.lvar(ref_count),
+            Unary::Ptr(p) => match p.ope {
+                PtrOpe::Deref => None,
+                PtrOpe::Ref => p.unary.lvar(ref_count + 1),
+            },
         }
-        self.prim.lvar()
+    }
+    pub fn ope(&self) -> &Option<MulDiv> {
+        match self {
+            Unary::Ptr(p) => p.unary.ope(),
+            Unary::Var(p) => &p.ope,
+        }
     }
 }
 #[derive(Debug)]
@@ -193,12 +217,12 @@ pub struct Ident {
     pub offset: usize,
 }
 impl Primary {
-    fn lvar(&self) -> Option<&Lvar> {
+    fn lvar(&self, ref_count: usize) -> Option<(&Lvar, usize)> {
         if self.ope.is_some() {
             return None;
         }
         match &self.node {
-            PrimaryNode::Lv(l) => Some(l),
+            PrimaryNode::Lv(l) => Some((l, ref_count)),
             _ => None,
         }
     }

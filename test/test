@@ -81,3 +81,4 @@
 "int pow(int a, int b) {0; return a * b;} int main(){return _p(pow(a=b=c=2,5));}" 10
 "int main(){return _p(10);}" 10
 "int main(){i=5;while(i>=0)_p(i=i-1);return i;}" "4,3,2,1,0,-1"
+"int main(){x=10;y=&x;z=&y;**z=12;_p(x);a=5;*z=&a;_p(**z);*y=2;_p(x);_p(a);_p(**z);_p(*&**&*&**&z);_p(*(y-8));_p(***(y+8));return 0;}" 12,5,12,2,2,2,10,2

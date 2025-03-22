@@ -7,8 +7,8 @@ use super::{
     },
     node::{
         Add, AddSub, Arg, Asgn, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For,
-        Ident, If, Lvar, Mul, MulDiv, Primary, PrimaryNode, Program, Relational, Rvar, Statement,
-        Stmt, Type, Unary, While,
+        Ident, If, Lvar, Mul, MulDiv, Primary, PrimaryNode, Program, PtrOpe, Relational, Rvar,
+        Statement, Stmt, Type, Unary, UnaryPtr, UnaryVar, While,
     },
 };
 #[derive(Debug)]
@@ -255,6 +255,17 @@ impl Parser<'_> {
         if self.empty() {
             return Err(self.fail("+, -, num or expression expected".into()));
         }
+        if self.consume("*").is_some() {
+            return Ok(Unary::Ptr(UnaryPtr {
+                ope: PtrOpe::Ref,
+                unary: Box::new(self.unary(ope)?),
+            }));
+        } else if self.consume("&").is_some() {
+            return Ok(Unary::Ptr(UnaryPtr {
+                ope: PtrOpe::Deref,
+                unary: Box::new(self.unary(ope)?),
+            }));
+        }
         let addsub = if self.consume("+").is_some() {
             Some(AddSub::Plus)
         } else if self.consume("-").is_some() {
@@ -262,10 +273,10 @@ impl Parser<'_> {
         } else {
             None
         };
-        Ok(Unary {
+        Ok(Unary::Var(UnaryVar {
             ope,
             prim: self.primary(addsub)?,
-        })
+        }))
     }
     fn mul(&mut self, ope: Option<AddSub>) -> ParseResult<Mul> {
         // 一般化したい
