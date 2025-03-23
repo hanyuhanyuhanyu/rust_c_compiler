@@ -60,7 +60,7 @@ impl Generator<'_> {
     }
     fn primary(&mut self, m: &Primary) -> GenResult {
         match &m.node {
-            PrimaryNode::Num(n) => Ok(vec![format!("push {}", n)]),
+            PrimaryNode::Num(n) => Ok(vec![format!("push {}", n.0)]),
             PrimaryNode::Expr(e) => self.expr(&e),
             PrimaryNode::Fcall(f) => self.fcall(f),
             PrimaryNode::Lv(Lvar::Id(i)) => Ok(vec![
@@ -223,19 +223,19 @@ impl Generator<'_> {
         return Ok(lines);
     }
     fn equality(&mut self, eq: &Equality) -> GenResult {
-        let mut lines = self.relational(&eq.first)?;
+        let mut lines = self.relational(&eq.first.0)?;
         if eq.relationals.len() == 0 {
             return Ok(lines);
         }
         for rel in eq.relationals.iter() {
-            if rel.ope.is_none() {
+            if rel.0.ope.is_none() {
                 return Err(vec!["operator expected".into()]);
             }
-            let second = self.relational(rel);
+            let second = self.relational(&rel.0);
             if second.is_err() {
                 return second;
             }
-            let ope = rel.ope.as_ref().unwrap();
+            let ope = rel.0.ope.as_ref().unwrap();
             lines.append(second.unwrap().as_mut());
             lines.push("pop rdi".into());
             lines.push("pop rax".into());
@@ -269,14 +269,14 @@ impl Generator<'_> {
     }
     fn assign(&mut self, a: &Assign) -> GenResult {
         return match a {
-            Assign::Rv(r) => self.equality(&r.eq),
+            Assign::Rv(r) => self.equality(&r.eq.0), // TODO見直し
             Assign::Asgn(a) => {
-                let lvar = a.lvar.lvar();
+                let lvar = a.lvar.0.lvar();
                 if lvar.is_none() {
                     return Err(vec!["expression canoot be assigned".into()]);
                 }
-                let (lv, count) = lvar.unwrap();
-                let l = self.lvar(lv, count)?;
+                let (lv, _) = lvar.unwrap(); // 見直し
+                let l = self.lvar(lv.0, lv.1)?;
                 let mut r = self.expr(&a.rvar)?;
                 r.extend(l);
                 r.extend(vec![
@@ -315,15 +315,15 @@ impl Generator<'_> {
     fn for_(&mut self, f: &For) -> GenResult {
         let init = match &f.init {
             None => vec![],
-            Some(e) => self.expr(e)?,
+            Some(e) => self.expr(&e.0)?, // TODO 見直し
         };
         let cond = match &f.cond {
             None => vec![],
-            Some(e) => self.expr(e)?,
+            Some(e) => self.expr(&e.0)?, // TODO 見直し
         };
         let step = match &f.step {
             None => vec![],
-            Some(e) => self.expr(e)?,
+            Some(e) => self.expr(&e.0)?, // TODO 見直し
         };
         let stmt = self.stmt(&f.stmt)?;
         let start_label = format!(".ForStart{}", self.jump_label());
@@ -362,7 +362,7 @@ impl Generator<'_> {
         .concat())
     }
     fn if_(&mut self, i: &If) -> GenResult {
-        let cond = self.expr(&i.cond)?;
+        let cond = self.expr(&i.cond.0)?; //TODO見直し
         let end_label = format!(".IfEnd{}", self.jump_label());
         let stmt = self.stmt(&i.stmt)?;
         if i.else_.is_none() {

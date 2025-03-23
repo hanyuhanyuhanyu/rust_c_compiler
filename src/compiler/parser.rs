@@ -24,6 +24,7 @@ pub struct Parser<'a> {
     pub index: usize,
     pub input: &'a String,
     pub required_memory: usize,
+    pub funcs: HashMap<String, Type>,
     pub idents: HashMap<String, VarDef>,
     pub read_lines: usize,
     pub line_index: usize,
@@ -167,13 +168,18 @@ impl Parser<'_> {
             }
         }
     }
-    fn p_exp(&mut self, ope: Option<AddSub>) -> ParseResult<Primary> {
-        Ok(Primary {
-            ope,
-            node: PrimaryNode::Expr(Box::new(self.parenthesized(|p| p.expr())?)),
-        })
+    fn p_exp(&mut self, ope: Option<AddSub>) -> ParseResult<(Primary, Type)> {
+        let node = self.parenthesized(|p| p.expr())?;
+        let type_ = node.1.clone();
+        return Ok((
+            Primary {
+                ope,
+                node: (PrimaryNode::Expr(Box::new(node.0)), type_.clone()),
+            },
+            type_,
+        ));
     }
-    fn p_num(&mut self, ope: Option<AddSub>) -> ParseResult<Primary> {
+    fn p_num(&mut self, ope: Option<AddSub>) -> ParseResult<(Primary, Type)> {
         self.space();
         let mut raw_num: String = "".into();
         loop {
@@ -188,31 +194,46 @@ impl Parser<'_> {
         if raw_num.len() == 0 {
             return Err(self.fail("number expected".into()));
         }
-        Ok(Primary {
-            ope: ope,
-            node: PrimaryNode::Num(raw_num),
-        })
+        Ok((
+            Primary {
+                ope: ope,
+                node: (PrimaryNode::Num((raw_num, Type::LInt)), Type::LInt),
+            },
+            Type::LInt,
+        ))
     }
     fn get_ident(&mut self) -> Option<String> {
         let first = self.top_f(|c| c.is_token_first())?;
         let tail = self.consume_f(|c| c.is_token_parts()).unwrap_or("".into());
         Some(format!("{}{}", first, tail))
     }
-    fn p_ident(&mut self, ope: Option<AddSub>, ident: String) -> ParseResult<Primary> {
+    fn p_ident(&mut self, ope: Option<AddSub>, ident: String) -> ParseResult<(Primary, Type)> {
         let var = self.idents.get(&ident);
         if var.is_none() {
             return Err(self.fail(format!("var {} undeclared", ident)));
         }
-        Ok(Primary {
-            ope,
-            node: PrimaryNode::Lv(Lvar::Id(Ident {
-                // type_: Type::Int,
-                offset: var.unwrap().offset,
-                // refable, refで剥がして良い回数を持ちたい
-            })),
-        })
+        let v = var.unwrap();
+        Ok((
+            Primary {
+                ope,
+                node: (
+                    PrimaryNode::Lv(Lvar::Id(Ident {
+                        _type_: v._type_.clone(),
+                        offset: v.offset,
+                        // refable, refで剥がして良い回数を持ちたい
+                    })),
+                    v._type_.clone(),
+                ),
+            },
+            v._type_.clone(),
+        ))
     }
-    fn fcall(&mut self, ope: Option<AddSub>, ident: String) -> ParseResult<Primary> {
+    fn fcall(&mut self, ope: Option<AddSub>, ident: String) -> ParseResult<(Primary, Type)> {
+        let f = self.funcs.get(&ident);
+        if f.is_none() {
+            return Err(self.fail(format!("func {} is undefined", &ident)));
+        }
+        let type_ = f.unwrap().clone();
         let args = self.parenthesized(|p| {
             p.loop_while(
                 |p, _| !p.check_top(")") && !p.empty(),
@@ -220,12 +241,16 @@ impl Parser<'_> {
                 |p, _| p.expr(),
             )
         })?;
-        Ok(Primary {
-            ope,
-            node: PrimaryNode::Fcall(Fcall { ident, args }),
-        })
+        // TODO: argsの型チェックもしようね
+        Ok((
+            Primary {
+                ope,
+                node: (PrimaryNode::Fcall(Fcall { ident, args }), type_.clone()),
+            },
+            type_,
+        ))
     }
-    fn primary(&mut self, ope: Option<AddSub>) -> ParseResult<Primary> {
+    fn primary(&mut self, ope: Option<AddSub>) -> ParseResult<(Primary, Type)> {
         if self.empty() {
             return Err(self.fail("number or ( expected".into()));
         }
@@ -246,20 +271,33 @@ impl Parser<'_> {
             self.p_ident(ope, ident.unwrap())
         }
     }
-    fn unary(&mut self, ope: Option<MulDiv>) -> ParseResult<Unary> {
+    fn unary(&mut self, ope: Option<MulDiv>) -> ParseResult<(Unary, Type)> {
         if self.empty() {
             return Err(self.fail("+, -, num or expression expected".into()));
         }
         if self.consume("*").is_some() {
-            return Ok(Unary::Ptr(UnaryPtr {
-                ope: PtrOpe::Ref,
-                unary: Box::new(self.unary(ope)?),
-            }));
+            let unary = self.unary(ope)?;
+            let t = unary.1.clone();
+            return Ok((
+                Unary::Ptr(UnaryPtr {
+                    ope: PtrOpe::Ref,
+                    unary: Box::new(unary),
+                }),
+                Type::Ptr(Box::new(t)),
+            ));
         } else if self.consume("&").is_some() {
-            return Ok(Unary::Ptr(UnaryPtr {
-                ope: PtrOpe::Deref,
-                unary: Box::new(self.unary(ope)?),
-            }));
+            let unary = self.unary(ope)?;
+            let t = unary.1.clone();
+            return match t {
+                Type::Ptr(inside) => Ok((
+                    Unary::Ptr(UnaryPtr {
+                        ope: PtrOpe::Deref,
+                        unary: Box::new(unary),
+                    }),
+                    *inside,
+                )),
+                ty => Err(self.fail(format!("cannot get deref of type {:?}", ty))),
+            };
         }
         let addsub = if self.consume("+").is_some() {
             Some(AddSub::Plus)
@@ -268,14 +306,13 @@ impl Parser<'_> {
         } else {
             None
         };
-        Ok(Unary::Var(UnaryVar {
-            ope,
-            prim: self.primary(addsub)?,
-        }))
+        let prim = self.primary(addsub)?;
+        let t = prim.1.clone();
+        Ok((Unary::Var(UnaryVar { ope, prim: prim }), t))
     }
-    fn mul(&mut self, ope: Option<AddSub>) -> ParseResult<Mul> {
+    fn mul(&mut self, ope: Option<AddSub>) -> ParseResult<(Mul, Type)> {
         // 一般化したい
-        let first = self.unary(None)?;
+        let (una, type_) = self.unary(None)?;
         let unarys = self.loop_while(
             |p, _| !p.empty() && (p.check_top("/") || p.check_top("*")),
             |_, _| true,
@@ -290,10 +327,17 @@ impl Parser<'_> {
                 p.unary(ope)
             },
         )?;
-        Ok(Mul { first, ope, unarys })
+        Ok((
+            Mul {
+                first: (una, type_.clone()),
+                ope,
+                unarys,
+            },
+            type_,
+        ))
     }
-    fn add(&mut self, ope: Option<Compare>) -> ParseResult<Add> {
-        let first = self.mul(None)?;
+    fn add(&mut self, ope: Option<Compare>) -> ParseResult<(Add, Type)> {
+        let (first, type_) = self.mul(None)?;
         let muls = self.loop_while(
             |p, _| !p.empty() && (p.check_top("+") || p.check_top("-")),
             |_, _| true,
@@ -308,13 +352,36 @@ impl Parser<'_> {
                 p.mul(ope)
             },
         )?;
-        Ok(Add {
-            first,
-            ope: ope,
-            muls,
-        })
+
+        if muls.len() == 0 {
+            return Ok((
+                Add {
+                    first: (first, type_.clone()),
+                    ope,
+                    muls,
+                },
+                type_,
+            ));
+        }
+        if type_ != muls.first().unwrap().1 {
+            Err(self.fail(format!(
+                "bad operatow usage {:?} {:?} {:?}",
+                type_,
+                ope,
+                muls.first().unwrap().1
+            )))
+        } else {
+            Ok((
+                Add {
+                    first: (first, type_.clone()),
+                    ope,
+                    muls,
+                },
+                type_,
+            ))
+        }
     }
-    fn relational(&mut self, ope: Option<Equals>) -> ParseResult<Relational> {
+    fn relational(&mut self, ope: Option<Equals>) -> ParseResult<(Relational, Type)> {
         let first = self.add(None)?;
         let checker = |p: &mut Self, _| {
             !p.empty()
@@ -338,11 +405,28 @@ impl Parser<'_> {
                 p.add(ope)
             },
         )?;
-
-        Ok(Relational { first, ope, adds })
+        if adds.len() == 0 {
+            Ok((Relational { first, ope, adds }, Type::Int))
+        } else {
+            if adds.first().is_none() {
+                return Err(self.fail("compiler bug, relational.add accidentally empty".into()));
+            }
+            let un = adds.first().unwrap();
+            if un.1 != first.1 {
+                Err(self.fail(format!(
+                    "bad operatow usage {:?} {:?} {:?}",
+                    first.1, un.0.ope, un.1
+                )))
+            } else {
+                Ok((
+                    Relational { first, ope, adds },
+                    Type::Int, // TODO bool
+                ))
+            }
+        }
     }
-    fn equality(&mut self) -> ParseResult<Equality> {
-        let first = self.relational(None)?;
+    fn equality(&mut self) -> ParseResult<(Equality, Type)> {
+        let (first, l_type) = self.relational(None)?;
         let checker = |p: &mut Self, _| !p.empty() && (p.check_top("==") || p.check_top("!="));
         let relationals = self.loop_while(
             checker,
@@ -358,21 +442,54 @@ impl Parser<'_> {
                 p.relational(ope)
             },
         )?;
-        Ok(Equality { first, relationals })
+        if relationals.first().is_none() {
+            Ok((
+                Equality {
+                    first: (first, l_type.clone()),
+                    relationals,
+                },
+                l_type,
+            ))
+        } else {
+            if relationals.first().unwrap().1 != l_type {
+                Err(self.fail(format!(
+                    "bad operation usage {:?} {:?} {:?}",
+                    l_type,
+                    relationals.first().unwrap().0.ope,
+                    relationals.first().unwrap().1
+                )))
+            } else {
+                Ok((
+                    Equality {
+                        first: (first, l_type),
+                        relationals,
+                    },
+                    Type::Int,
+                )) // boolにしたい
+            }
+        }
     }
-    fn rvar(&mut self) -> ParseResult<Equality> {
+    fn rvar(&mut self) -> ParseResult<(Equality, Type)> {
         self.equality()
     }
-    fn assign(&mut self) -> ParseResult<Assign> {
-        let eq = self.rvar()?;
+    fn assign(&mut self) -> ParseResult<(Assign, Type)> {
+        let (eq, rtype) = self.rvar()?;
         let lvar = eq.lvar();
         if lvar.is_none() || self.consume("=").is_none() {
-            return Ok(Assign::Rv(Rvar { eq }));
+            return Ok((
+                Assign::Rv(Rvar {
+                    eq: (eq, rtype.clone()),
+                }),
+                rtype,
+            ));
         }
-        Ok(Assign::Asgn(Asgn {
-            lvar: eq,
-            rvar: Box::new(self.expr()?),
-        }))
+        Ok((
+            Assign::Asgn(Asgn {
+                lvar: (eq, rtype.clone()),
+                rvar: Box::new(self.expr()?),
+            }),
+            rtype,
+        ))
     }
     fn lvar(&mut self) -> ParseResult<(usize, String)> {
         let ref_count = self.consume_f(|c| c == '*').unwrap_or("".into()).len();
@@ -386,11 +503,10 @@ impl Parser<'_> {
         if ref_count == 0 {
             t
         } else {
-            Type::Ptr(())
-            // Type::Ptr(Box::new(self.gen_type(t, ref_count - 1)))
+            Type::Ptr(Box::new(self.gen_type(t, ref_count - 1)))
         }
     }
-    fn def(&mut self) -> ParseResult<(Vec<VarDef>, Option<Assign>)> {
+    fn def(&mut self) -> ParseResult<(Vec<VarDef>, Option<Assign>, Type)> {
         let type_ = self.find_type();
         if type_.is_none() {
             return Err(self.fail("type expected".into()));
@@ -417,21 +533,24 @@ impl Parser<'_> {
             },
         )?;
         if self.consume("=").is_none() {
-            return Ok((vardefs, None));
+            return Ok((vardefs, None, type_.unwrap()));
         }
-        Ok((vardefs, Some(self.assign()?)))
+        Ok((vardefs, Some(self.assign()?.0), type_.unwrap())) // TODO 本当に良い？
     }
-    fn expr(&mut self) -> ParseResult<Expr> {
+    fn expr(&mut self) -> ParseResult<(Expr, Type)> {
         if self.check_type() {
-            let (a, b) = self.def()?;
-            return Ok(Expr::VarAsgn(a, b));
+            let (a, b, type_) = self.def()?;
+            return Ok((Expr::VarAsgn(a, b), type_));
         }
         let ret = self.consume_expect(|c| c.is_token_parts(), RETURN);
         match self.assign() {
-            Ok(assign) => Ok(Expr::Asgn(ExprAssign {
-                assign,
-                ret: ret.is_some(),
-            })),
+            Ok(assign) => Ok((
+                Expr::Asgn(ExprAssign {
+                    assign: assign.0,
+                    ret: ret.is_some(),
+                }),
+                assign.1,
+            )),
             Err(e) => Err(e),
         }
     }
@@ -479,7 +598,7 @@ impl Parser<'_> {
         })
     }
     fn if_(&mut self) -> ParseResult<If> {
-        let cond = self.parenthesized(|p| p.expr())?;
+        let cond = self.parenthesized(|p| p.expr())?; //TODO: 型情報捨ててOK？
         let stmt = self.stmt()?;
         if self.consume("else").is_none() {
             Ok(If {
@@ -531,7 +650,7 @@ impl Parser<'_> {
         if self.consume(";").is_none() {
             return Err(self.fail("; expected".into()));
         }
-        return Ok(Statement::Stmt(Stmt { expr }));
+        return Ok(Statement::Stmt(Stmt { expr: expr.0 }));
     }
     fn check_type(&mut self) -> bool {
         TYPES.iter().any(|t| self.check_top(t))
@@ -617,10 +736,11 @@ impl Parser<'_> {
         for arg in args.iter() {
             idents.insert(arg.ident.clone(), arg.clone());
         }
-
+        self.funcs.insert(ident.clone().unwrap(), type_.unwrap());
         let mut child = Parser {
             index: self.index,
             input: self.input,
+            funcs: self.funcs.clone(),
             required_memory: args.last().map_or(0, |v| v.offset),
             idents,
             read_lines: self.read_lines,
@@ -658,6 +778,7 @@ pub fn parse(input: &String) -> ParseResult<Program> {
         index: 0,
         required_memory: 0,
         line_index: 0,
+        funcs: HashMap::new(),
         idents: HashMap::new(),
         read_lines: 0,
     }

@@ -15,5 +15,6 @@ pub fn sizeof(t: &Type) -> usize {
     match t {
         Type::Int => 8, // 適切なレジスタを選択できていないので8固定
         Type::Ptr(_) => 8,
+        Type::LInt => 4, // 数値で中身が不明ならIntとみなす
     }
 }

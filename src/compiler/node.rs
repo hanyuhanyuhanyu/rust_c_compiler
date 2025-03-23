@@ -20,15 +20,17 @@ pub enum Equals {
     Equal,
     NotEqual,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Type {
+    _Panic, // 開発用
+    LInt,
     Int,
-    Ptr(()),
+    Ptr(Box<Type>),
 }
 #[derive(Debug)]
 pub struct Fcall {
     pub ident: String,
-    pub args: Vec<Expr>,
+    pub args: Vec<(Expr, Type)>,
 }
 #[derive(Debug)]
 pub struct Fdef {
@@ -47,20 +49,20 @@ pub struct Program {
 
 #[derive(Debug)]
 pub struct If {
-    pub cond: Expr,
+    pub cond: (Expr, Type),
     pub stmt: Box<Statement>,
     pub else_: Option<Box<Statement>>,
 }
 #[derive(Debug)]
 pub struct For {
-    pub init: Option<Expr>,
-    pub cond: Option<Expr>,
-    pub step: Option<Expr>,
+    pub init: Option<(Expr, Type)>,
+    pub cond: Option<(Expr, Type)>,
+    pub step: Option<(Expr, Type)>,
     pub stmt: Box<Statement>,
 }
 #[derive(Debug)]
 pub struct While {
-    pub cond: Expr,
+    pub cond: (Expr, Type),
     pub stmt: Box<Statement>,
 }
 #[derive(Debug)]
@@ -100,12 +102,12 @@ pub struct ExprAssign {
 }
 #[derive(Debug)]
 pub struct Rvar {
-    pub eq: Equality,
+    pub eq: (Equality, Type),
 }
 #[derive(Debug)]
 pub struct Asgn {
-    pub lvar: Equality,
-    pub rvar: Box<Expr>,
+    pub lvar: (Equality, Type),
+    pub rvar: Box<(Expr, Type)>,
 }
 #[derive(Debug, Clone)]
 pub struct VarDef {
@@ -122,11 +124,11 @@ pub enum Assign {
 }
 #[derive(Debug)]
 pub struct Equality {
-    pub first: Relational,
-    pub relationals: Vec<Relational>,
+    pub first: (Relational, Type),
+    pub relationals: Vec<(Relational, Type)>,
 }
 impl Equality {
-    pub fn lvar(&self) -> Option<(&Lvar, usize)> {
+    pub fn lvar(&self) -> Option<((&Lvar, usize), Type)> {
         if self.relationals.len() > 0 {
             return None;
         }
@@ -135,9 +137,9 @@ impl Equality {
 }
 #[derive(Debug)]
 pub struct Relational {
-    pub first: Add,
+    pub first: (Add, Type),
     pub ope: Option<Equals>,
-    pub adds: Vec<Add>,
+    pub adds: Vec<(Add, Type)>,
 }
 impl Relational {
     fn lvar(&self) -> Option<(&Lvar, usize)> {
@@ -149,9 +151,9 @@ impl Relational {
 }
 #[derive(Debug)]
 pub struct Add {
-    pub first: Mul,
+    pub first: (Mul, Type),
     pub ope: Option<Compare>,
-    pub muls: Vec<Mul>,
+    pub muls: Vec<(Mul, Type)>,
 }
 impl Add {
     fn lvar(&self) -> Option<(&Lvar, usize)> {
@@ -163,9 +165,9 @@ impl Add {
 }
 #[derive(Debug)]
 pub struct Mul {
-    pub first: Unary,
+    pub first: (Unary, Type),
     pub ope: Option<AddSub>,
-    pub unarys: Vec<Unary>,
+    pub unarys: Vec<(Unary, Type)>,
 }
 impl Mul {
     fn lvar(&self) -> Option<(&Lvar, usize)> {
@@ -183,12 +185,12 @@ pub enum PtrOpe {
 #[derive(Debug)]
 pub struct UnaryPtr {
     pub ope: PtrOpe,
-    pub unary: Box<Unary>,
+    pub unary: Box<(Unary, Type)>,
 }
 #[derive(Debug)]
 pub struct UnaryVar {
     pub ope: Option<MulDiv>,
-    pub prim: Primary,
+    pub prim: (Primary, Type),
 }
 #[derive(Debug)]
 pub enum Unary {
@@ -218,7 +220,7 @@ pub enum Lvar {
 }
 #[derive(Debug)]
 pub enum PrimaryNode {
-    Num(String),
+    Num((String, Type)),
     Lv(Lvar),
     Expr(Box<Expr>),
     Fcall(Fcall),
@@ -226,11 +228,11 @@ pub enum PrimaryNode {
 #[derive(Debug)]
 pub struct Primary {
     pub ope: Option<AddSub>,
-    pub node: PrimaryNode,
+    pub node: (PrimaryNode, Type),
 }
 #[derive(Debug)]
 pub struct Ident {
-    // pub type_: Type,
+    pub _type_: Type,
     pub offset: usize,
 }
 impl Primary {
@@ -238,7 +240,7 @@ impl Primary {
         if self.ope.is_some() {
             return None;
         }
-        match &self.node {
+        match &self.node.0 {
             PrimaryNode::Lv(l) => Some((l, ref_count)),
             _ => None,
         }
