@@ -113,25 +113,6 @@ impl Generator<'_> {
             }
         }
     }
-    // fn unary(&mut self, u: &Unary) -> GenResult {
-    //     let pri = self.unwrap_ref(u);
-    //     match pri.prim.ope {
-    //         None | Some(AddSub::Plus) => {
-    //             return self.primary(&pri.prim);
-    //         }
-    //         _ => {
-    //             let prim = self.primary(&pri.prim)?;
-    //             Ok([
-    //                 prim,
-    //                 vec!["push 0", "pop rdi", "pop rax", "sub rdi, rax", "push rdi"]
-    //                     .iter()
-    //                     .map(|s| s.to_string())
-    //                     .collect(),
-    //             ]
-    //             .concat())
-    //         }
-    //     }
-    // }
     fn mul(&mut self, m: &Mul) -> GenResult {
         let first = self.unary(&m.first);
         if first.is_err() {
