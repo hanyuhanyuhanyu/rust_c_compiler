@@ -13,8 +13,9 @@ pub const TYPE_WANTED: &str = "type declaration required";
 pub const IDENTITY_WANTED: &str = "identity wanted";
 pub fn sizeof(t: &Type) -> usize {
     match t {
+        Type::_Panic => 8,
         Type::Int => 8, // 適切なレジスタを選択できていないので8固定
         Type::Ptr(_) => 8,
-        Type::LInt => 4, // 数値で中身が不明ならIntとみなす
+        Type::LInt => 8, // 数値で中身が不明ならIntとみなす
     }
 }

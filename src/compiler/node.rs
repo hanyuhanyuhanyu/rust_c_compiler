@@ -1,3 +1,4 @@
+pub type Typed<T> = (T, Type);
 #[derive(Debug)]
 pub enum AddSub {
     Plus,
@@ -30,7 +31,7 @@ pub enum Type {
 #[derive(Debug)]
 pub struct Fcall {
     pub ident: String,
-    pub args: Vec<(Expr, Type)>,
+    pub args: Vec<Typed<Expr>>,
 }
 #[derive(Debug)]
 pub struct Fdef {
@@ -55,19 +56,19 @@ pub struct If {
 }
 #[derive(Debug)]
 pub struct For {
-    pub init: Option<(Expr, Type)>,
-    pub cond: Option<(Expr, Type)>,
-    pub step: Option<(Expr, Type)>,
+    pub init: Option<Typed<Expr>>,
+    pub cond: Option<Typed<Expr>>,
+    pub step: Option<Typed<Expr>>,
     pub stmt: Box<Statement>,
 }
 #[derive(Debug)]
 pub struct While {
-    pub cond: (Expr, Type),
+    pub cond: Typed<Expr>,
     pub stmt: Box<Statement>,
 }
 #[derive(Debug)]
 pub struct Stmt {
-    pub expr: Expr,
+    pub expr: Typed<Expr>,
 }
 #[derive(Debug)]
 pub struct Block {
@@ -102,12 +103,12 @@ pub struct ExprAssign {
 }
 #[derive(Debug)]
 pub struct Rvar {
-    pub eq: (Equality, Type),
+    pub eq: Typed<Equality>,
 }
 #[derive(Debug)]
 pub struct Asgn {
-    pub lvar: (Equality, Type),
-    pub rvar: Box<(Expr, Type)>,
+    pub lvar: Typed<Equality>,
+    pub rvar: Box<Typed<Expr>>,
 }
 #[derive(Debug, Clone)]
 pub struct VarDef {
@@ -124,15 +125,16 @@ pub enum Assign {
 }
 #[derive(Debug)]
 pub struct Equality {
-    pub first: (Relational, Type),
-    pub relationals: Vec<(Relational, Type)>,
+    pub first: Typed<Relational>,
+    pub relationals: Vec<Typed<Relational>>,
 }
 impl Equality {
     pub fn lvar(&self) -> Option<((&Lvar, usize), Type)> {
-        if self.relationals.len() > 0 {
+        if self.first.0.lvar().is_none() || self.relationals.len() > 0 {
             return None;
         }
-        self.first.lvar()
+
+        Some((self.first.0.lvar().unwrap(), self.first.1.clone()))
     }
 }
 #[derive(Debug)]
@@ -146,7 +148,7 @@ impl Relational {
         if self.ope.is_some() || self.adds.len() > 0 {
             return None;
         }
-        self.first.lvar()
+        self.first.0.lvar()
     }
 }
 #[derive(Debug)]
@@ -160,7 +162,7 @@ impl Add {
         if self.ope.is_some() || self.muls.len() > 0 {
             return None;
         }
-        self.first.lvar()
+        self.first.0.lvar()
     }
 }
 #[derive(Debug)]
@@ -174,7 +176,7 @@ impl Mul {
         if self.ope.is_some() || self.unarys.len() > 0 {
             return None;
         }
-        self.first.lvar(0)
+        self.first.0.lvar(0)
     }
 }
 #[derive(Debug)]
@@ -200,16 +202,16 @@ pub enum Unary {
 impl Unary {
     fn lvar(&self, ref_count: usize) -> Option<(&Lvar, usize)> {
         match self {
-            Unary::Var(p) => p.prim.lvar(ref_count),
+            Unary::Var(p) => p.prim.0.lvar(ref_count),
             Unary::Ptr(p) => match p.ope {
                 PtrOpe::Deref => None,
-                PtrOpe::Ref => p.unary.lvar(ref_count + 1),
+                PtrOpe::Ref => p.unary.0.lvar(ref_count + 1),
             },
         }
     }
     pub fn ope(&self) -> &Option<MulDiv> {
         match self {
-            Unary::Ptr(p) => p.unary.ope(),
+            Unary::Ptr(p) => p.unary.0.ope(),
             Unary::Var(p) => &p.ope,
         }
     }

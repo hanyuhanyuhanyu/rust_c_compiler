@@ -4,7 +4,7 @@ use crate::compiler::consts::IDENTITY_OFFSET;
 
 use super::node::{
     Add, AddSub, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For, If, Lvar, Mul,
-    MulDiv, Primary, PrimaryNode, Program, PtrOpe, Relational, Statement, Unary, While,
+    MulDiv, Primary, PrimaryNode, Program, PtrOpe, Relational, Statement, Typed, Unary, While,
 };
 const PUSH_REF: &str = "push [rax]";
 const PUSH_VAL: &str = "push rax";
@@ -44,7 +44,7 @@ impl Generator<'_> {
     fn fcall(&mut self, f: &Fcall) -> GenResult {
         let mut lines = Vec::new();
         for e in f.args.iter().rev() {
-            lines.extend(self.expr(e)?);
+            lines.extend(self.expr(&(&e.0, e.1.clone()))?);
         }
 
         // 6つまではレジスタ経由。rdi,rsi,rdx,rx,r8,r9の順。
@@ -58,10 +58,10 @@ impl Generator<'_> {
         lines.push(PUSH_VAL.into());
         Ok(lines)
     }
-    fn primary(&mut self, m: &Primary) -> GenResult {
-        match &m.node {
+    fn primary(&mut self, m: &Typed<Primary>) -> GenResult {
+        match &m.0.node.0 {
             PrimaryNode::Num(n) => Ok(vec![format!("push {}", n.0)]),
-            PrimaryNode::Expr(e) => self.expr(&e),
+            PrimaryNode::Expr(e) => self.expr(&(e, m.1.clone())),
             PrimaryNode::Fcall(f) => self.fcall(f),
             PrimaryNode::Lv(Lvar::Id(i)) => Ok(vec![
                 "mov rax, rbp".into(),
@@ -70,8 +70,8 @@ impl Generator<'_> {
             ]),
         }
     }
-    fn unary(&mut self, u: &Unary) -> GenResult {
-        match u {
+    fn unary(&mut self, u: &Typed<Unary>) -> GenResult {
+        match &u.0 {
             Unary::Ptr(p) => {
                 let mut pri = self.unary(&p.unary)?;
                 let last = pri.last();
@@ -95,7 +95,7 @@ impl Generator<'_> {
             }
             Unary::Var(v) => {
                 let pri = self.primary(&v.prim)?;
-                match v.prim.ope {
+                match v.prim.0.ope {
                     None | Some(AddSub::Plus) => {
                         return Ok(pri);
                     }
@@ -113,17 +113,17 @@ impl Generator<'_> {
             }
         }
     }
-    fn mul(&mut self, m: &Mul) -> GenResult {
-        let first = self.unary(&m.first);
+    fn mul(&mut self, m: &Typed<Mul>) -> GenResult {
+        let first = self.unary(&m.0.first);
         if first.is_err() {
             return first;
         }
-        if m.unarys.len() == 0 {
+        if m.0.unarys.len() == 0 {
             return first;
         }
         let mut lines = first.unwrap();
-        for u in m.unarys.iter() {
-            let ope = u.ope();
+        for u in m.0.unarys.iter() {
+            let ope = u.0.ope();
             if ope.is_none() {
                 return Err(vec!["operator expected".into()]);
             }
@@ -147,17 +147,17 @@ impl Generator<'_> {
         }
         return Ok(lines);
     }
-    fn add(&mut self, a: &Add) -> GenResult {
-        let first = self.mul(&a.first);
+    fn add(&mut self, a: &Typed<Add>) -> GenResult {
+        let first = self.mul(&a.0.first);
         if first.is_err() {
             return first;
         }
-        if a.muls.len() == 0 {
+        if a.0.muls.len() == 0 {
             return first;
         }
         let mut lines = first.unwrap();
-        for m in a.muls.iter() {
-            if m.ope.is_none() {
+        for m in a.0.muls.iter() {
+            if m.0.ope.is_none() {
                 return Err(vec!["operator expected".into()]);
             }
             let second = self.mul(m);
@@ -167,7 +167,7 @@ impl Generator<'_> {
             lines.extend(second.unwrap());
             lines.push("pop rdi".into());
             lines.push("pop rax".into());
-            match m.ope.as_ref().unwrap() {
+            match m.0.ope.as_ref().unwrap() {
                 AddSub::Plus => {
                     lines.push("add rax, rdi".into());
                 }
@@ -179,17 +179,17 @@ impl Generator<'_> {
         }
         return Ok(lines);
     }
-    fn relational(&mut self, rel: &Relational) -> GenResult {
-        let first = self.add(&rel.first);
+    fn relational(&mut self, rel: &Typed<Relational>) -> GenResult {
+        let first = self.add(&rel.0.first);
         if first.is_err() {
             return first;
         }
-        if rel.adds.len() == 0 {
+        if rel.0.adds.len() == 0 {
             return first;
         }
         let mut lines = first.unwrap();
-        for a in rel.adds.iter() {
-            if a.ope.is_none() {
+        for a in rel.0.adds.iter() {
+            if a.0.ope.is_none() {
                 return Err(vec!["operator expected".into()]);
             }
             let second = self.add(a);
@@ -199,7 +199,7 @@ impl Generator<'_> {
             lines.extend(second.unwrap());
             lines.push("pop rdi".into());
             lines.push("pop rax".into());
-            match a.ope.as_ref().unwrap() {
+            match a.0.ope.as_ref().unwrap() {
                 Compare::Lt => {
                     lines.push("cmp rax, rdi".into());
                     lines.push("setl al".into());
@@ -222,16 +222,16 @@ impl Generator<'_> {
         }
         return Ok(lines);
     }
-    fn equality(&mut self, eq: &Equality) -> GenResult {
-        let mut lines = self.relational(&eq.first.0)?;
-        if eq.relationals.len() == 0 {
+    fn equality(&mut self, eq: &Typed<Equality>) -> GenResult {
+        let mut lines = self.relational(&eq.0.first)?;
+        if eq.0.relationals.len() == 0 {
             return Ok(lines);
         }
-        for rel in eq.relationals.iter() {
+        for rel in eq.0.relationals.iter() {
             if rel.0.ope.is_none() {
                 return Err(vec!["operator expected".into()]);
             }
-            let second = self.relational(&rel.0);
+            let second = self.relational(&rel);
             if second.is_err() {
                 return second;
             }
@@ -267,17 +267,17 @@ impl Generator<'_> {
             .concat()
         })
     }
-    fn assign(&mut self, a: &Assign) -> GenResult {
+    fn assign(&mut self, a: &Typed<&Assign>) -> GenResult {
         return match a {
-            Assign::Rv(r) => self.equality(&r.eq.0), // TODO見直し
-            Assign::Asgn(a) => {
+            (Assign::Rv(r), _) => self.equality(&r.eq),
+            (Assign::Asgn(a), _) => {
                 let lvar = a.lvar.0.lvar();
                 if lvar.is_none() {
                     return Err(vec!["expression canoot be assigned".into()]);
                 }
                 let (lv, _) = lvar.unwrap(); // 見直し
                 let l = self.lvar(lv.0, lv.1)?;
-                let mut r = self.expr(&a.rvar)?;
+                let mut r = self.expr(&(&a.rvar.0, a.rvar.1.clone()))?;
                 r.extend(l);
                 r.extend(vec![
                     "pop rax".into(),
@@ -289,16 +289,16 @@ impl Generator<'_> {
             }
         };
     }
-    fn expr(&mut self, e: &Expr) -> GenResult {
+    fn expr(&mut self, e: &Typed<&Expr>) -> GenResult {
         match e {
-            Expr::Asgn(ea) => self.assign(&ea.assign),
-            Expr::VarAsgn(def, assign) => {
+            (Expr::Asgn(ea), _) => self.assign(&(&ea.assign, e.1.clone())),
+            (Expr::VarAsgn(def, assign), _) => {
                 let mut l = vec![];
                 if assign.is_none() {
                     l.push("push 0".into());
                 }
                 if assign.is_some() {
-                    l.extend(self.assign(assign.as_ref().unwrap())?);
+                    l.extend(self.assign(&(assign.as_ref().unwrap(), e.1.clone()))?);
                 };
                 l.push("pop rdi".into());
                 for v in def.iter() {
@@ -315,15 +315,15 @@ impl Generator<'_> {
     fn for_(&mut self, f: &For) -> GenResult {
         let init = match &f.init {
             None => vec![],
-            Some(e) => self.expr(&e.0)?, // TODO 見直し
+            Some(e) => self.expr(&(&e.0, e.1.clone()))?,
         };
         let cond = match &f.cond {
             None => vec![],
-            Some(e) => self.expr(&e.0)?, // TODO 見直し
+            Some(e) => self.expr(&(&e.0, e.1.clone()))?,
         };
         let step = match &f.step {
             None => vec![],
-            Some(e) => self.expr(&e.0)?, // TODO 見直し
+            Some(e) => self.expr(&(&e.0, e.1.clone()))?,
         };
         let stmt = self.stmt(&f.stmt)?;
         let start_label = format!(".ForStart{}", self.jump_label());
@@ -344,7 +344,7 @@ impl Generator<'_> {
         .concat())
     }
     fn while_(&mut self, w: &While) -> GenResult {
-        let cond = self.expr(&w.cond)?;
+        let cond = self.expr(&(&w.cond.0, w.cond.1.clone()))?;
         let start_label = format!(".WhileStart{}", self.jump_label());
         let end_label = format!(".WhileEnd{}", self.jump_label());
         let stmt = self.stmt(&w.stmt)?;
@@ -362,7 +362,7 @@ impl Generator<'_> {
         .concat())
     }
     fn if_(&mut self, i: &If) -> GenResult {
-        let cond = self.expr(&i.cond.0)?; //TODO見直し
+        let cond = self.expr(&(&i.cond.0, i.cond.1.clone()))?;
         let end_label = format!(".IfEnd{}", self.jump_label());
         let stmt = self.stmt(&i.stmt)?;
         if i.else_.is_none() {
@@ -407,8 +407,8 @@ impl Generator<'_> {
                 .reduce(|a, b| concat(a, b))
                 .unwrap_or(Ok(vec![])),
             Statement::Stmt(s) => {
-                let lines = self.expr(&s.expr)?;
-                if s.expr.does_return() {
+                let lines = self.expr(&(&s.expr.0, s.expr.1.clone()))?;
+                if s.expr.0.does_return() {
                     Ok([lines, self.epilogue()?].concat())
                 } else {
                     Ok(lines)
