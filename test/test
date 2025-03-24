@@ -91,5 +91,5 @@
 "int main(){int a = 1==1;_p(a);return 0;}" 1
 "int main(){int x = 2;_p(x); int a,b,c=c=x=2!=1;_p(x);_p(c);return 0;}" 2,1,1
 "int main(){int x,y = 2; int *a,**b; a = &x;b=&a; **b = 3;_p(x);_p(y); a = &y; x = 5; y = 4;_p(*a);_p(**b);return 0;}" 3,2,4,4
-"int main(){int x,y = 2; int *a,**b; a = &x;b=&a; **b = 3;_p(x);_p(y); a = &y; x = 5; y = 4;_p(*a);_p(**b);return 0;}" 3,2,4,4
+"int main(){int x,y = 2; int *a,   *    *   b; a = &x;b=&a; *         *b = 3;_p(x);_p(y); a = &y; x = 5; y = 4;_p(*a);_p( *  *  b);return 0;}" 3,2,4,4
 "int main(){;;;;;_p(1);; ;_p(2) ;   ;;  ;return 0;}" 1,2
