@@ -1,3 +1,5 @@
+use super::consts::sizeof;
+
 pub type Typed<T> = (T, Type);
 #[derive(Debug)]
 pub enum AddSub {
@@ -27,6 +29,15 @@ pub enum Type {
     LInt,
     Int,
     Ptr(Box<Type>),
+}
+impl Type {
+    pub fn when_addsub(&self, register: String) -> Vec<String> {
+        match &self {
+            Type::LInt | Type::Int => vec![],
+            Type::Ptr(_) => vec![format!("imul {}, {}", register, sizeof(self))],
+            _ => vec![],
+        }
+    }
 }
 #[derive(Debug)]
 pub struct Fcall {

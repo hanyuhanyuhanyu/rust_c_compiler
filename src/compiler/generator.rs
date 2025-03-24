@@ -177,6 +177,7 @@ impl Generator<'_> {
             }
             lines.extend(second.unwrap());
             lines.push("pop rdi".into());
+            lines.extend(a.1.when_addsub("rdi".into())); // FIXME: 型によって加減算のルールを指定したい。とても場当たり的なコード
             lines.push("pop rax".into());
             match m.0.ope.as_ref().unwrap() {
                 AddSub::Plus => {
