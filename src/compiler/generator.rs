@@ -1,10 +1,14 @@
 use std::cmp;
 
-use crate::compiler::consts::IDENTITY_OFFSET;
+use crate::compiler::consts::{IDENTITY_OFFSET, Register, register, sizeof};
 
-use super::node::{
-    Add, AddSub, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For, If, Lvar, Mul,
-    MulDiv, Primary, PrimaryNode, Program, PtrOpe, Relational, Statement, Typed, Unary, While,
+use super::{
+    consts::size_directive,
+    node::{
+        Add, AddSub, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For, If, Lvar,
+        Mul, MulDiv, Primary, PrimaryNode, Program, PtrOpe, Relational, Statement, Typed, Unary,
+        While,
+    },
 };
 const PUSH_REF: &str = "push [rax]";
 const PUSH_VAL: &str = "push rax";
@@ -34,7 +38,14 @@ struct Generator<'a> {
     p: &'a Program,
     jump_count: usize,
 }
-const FARG_REGS: [&str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
+const FARG_REGS: [Register; 6] = [
+    Register::Di,
+    Register::Si,
+    Register::Dx,
+    Register::Cx,
+    Register::_8,
+    Register::_9,
+];
 impl Generator<'_> {
     fn jump_label(&mut self) -> String {
         let label = self.jump_count.to_string();
@@ -50,8 +61,8 @@ impl Generator<'_> {
         // 6つまではレジスタ経由。rdi,rsi,rdx,rx,r8,r9の順。
         // 7つ目以降の引数はrbpの前に逆順で積む
         for i in 0..(cmp::min(f.args.len(), FARG_REGS.len())) {
-            let register = FARG_REGS.iter().nth(i).unwrap();
-            lines.extend(vec![format!("pop {}", register)]);
+            let r = FARG_REGS.iter().nth(i).unwrap();
+            lines.extend(vec![format!("pop {}", register(0, r))]);
         }
         lines.push(format!("call {}", f.ident,));
 
@@ -199,21 +210,24 @@ impl Generator<'_> {
             lines.extend(second.unwrap());
             lines.push("pop rdi".into());
             lines.push("pop rax".into());
+            //LInt型なのが問題？
+            let ax = register(sizeof(&a.1), &Register::_Ax);
+            let di = register(sizeof(&a.1), &Register::Di);
             match a.0.ope.as_ref().unwrap() {
                 Compare::Lt => {
-                    lines.push("cmp rax, rdi".into());
+                    lines.push(format!("cmp {}, {}", ax, di));
                     lines.push("setl al".into());
                 }
                 Compare::Lte => {
-                    lines.push("cmp rax, rdi".into());
+                    lines.push(format!("cmp {}, {}", ax, di));
                     lines.push("setle al".into());
                 }
                 Compare::Gt => {
-                    lines.push("cmp rdi, rax".into());
+                    lines.push(format!("cmp {}, {}", di, ax));
                     lines.push("setl al".into());
                 }
                 Compare::Gte => {
-                    lines.push("cmp rdi, rax".into());
+                    lines.push(format!("cmp {}, {}", di, ax));
                     lines.push("setle al".into());
                 }
             }
@@ -239,7 +253,7 @@ impl Generator<'_> {
             lines.append(second.unwrap().as_mut());
             lines.push("pop rdi".into());
             lines.push("pop rax".into());
-            lines.push("cmp rax, rdi".into());
+            lines.push("cmp rax, rdi".into()); // TODO
             match ope {
                 Equals::Equal => lines.push("sete al".into()),
                 Equals::NotEqual => lines.push("setne al".into()),
@@ -282,7 +296,11 @@ impl Generator<'_> {
                 r.extend(vec![
                     "pop rax".into(),
                     "pop rdi".into(),
-                    "mov [rax], rdi".into(),
+                    format!(
+                        "mov {}[rax], {}",
+                        size_directive(&a.lvar.1),
+                        register(sizeof(&a.lvar.1), &Register::Di)
+                    ),
                     "push rdi".into(),
                 ]);
                 Ok(r)
@@ -298,14 +316,20 @@ impl Generator<'_> {
                     l.push("push 0".into());
                 }
                 if assign.is_some() {
-                    l.extend(self.assign(&(assign.as_ref().unwrap(), e.1.clone()))?);
+                    l.extend(
+                        self.assign(&(assign.as_ref().unwrap(), assign.as_ref().unwrap().type_()))?,
+                    );
                 };
                 l.push("pop rdi".into());
                 for v in def.iter() {
                     l.extend(vec![
                         "mov rax, rbp".into(),
                         format!("sub rax, {}", v.offset),
-                        "mov [rax], rdi".into(),
+                        format!(
+                            "mov {}[rax], {}",
+                            size_directive(&v._type_),
+                            register(sizeof(&v._type_), &Register::Di)
+                        ),
                     ]);
                 }
                 Ok(l)
@@ -433,22 +457,31 @@ impl Generator<'_> {
             .map(|(i, a)| {
                 // 6つまではレジスタ経由。rdi,rsi,rdx,rx,r8,r9の順。
                 if i < FARG_REGS.len() {
-                    let register = FARG_REGS.iter().nth(i).unwrap();
+                    let r = FARG_REGS.iter().nth(i).unwrap();
                     vec![
                         "mov rax, rbp".into(),
                         format!("sub rax, {}", a.offset),
-                        format!("mov [rax], {}", register),
+                        format!(
+                            "mov {}[rax], {}",
+                            size_directive(&a._type_),
+                            register(sizeof(&a._type_), r)
+                        ),
                     ]
                 } else {
                     // 7つ目以降の引数はrbpの前に逆順で積まれている
                     let offset = (i + 1 - FARG_REGS.len()) * IDENTITY_OFFSET;
+                    let sd = size_directive(&a._type_);
                     vec![
                         "mov rax, rbp".into(),
                         format!("add rax, {}", offset + IDENTITY_OFFSET), // リターンドレスの分で8余分に動かす
                         "mov rdi, [rax]".into(),
                         "mov rax, rbp".into(),
                         format!("sub rax, {}", a.offset),
-                        "mov [rax], rdi".into(),
+                        format!(
+                            "mov {}[rax], {}",
+                            sd,
+                            register(sizeof(&a._type_), &Register::Di)
+                        ),
                     ]
                 }
             })

@@ -593,7 +593,7 @@ impl Parser<'_> {
         self.dbg("expr".into());
         if self.check_type() {
             let (a, b, type_) = self.def()?;
-            return Ok((Expr::VarAsgn(a, b), type_));
+            return Ok((Expr::VarAsgn(a, b), type_)); // FIXME: このtypeはint *xとしたときのint部分しか見ておらず、ポインタの部分は見られていないので、各変数の正しい型を見られていない。Generator側でうまく回避しているが、きちんとした形を模索すべき
         }
         let ret = self.consume_expect(|c| c.is_token_parts(), RETURN);
         let assign = self.assign()?;

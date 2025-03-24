@@ -123,6 +123,14 @@ pub enum Assign {
     Rv(Rvar),
     Asgn(Asgn),
 }
+impl Assign {
+    pub fn type_(&self) -> Type {
+        match &self {
+            Assign::Rv(r) => r.eq.1.clone(),
+            Assign::Asgn(a) => a.lvar.1.clone(),
+        }
+    }
+}
 #[derive(Debug)]
 pub struct Equality {
     pub first: Typed<Relational>,
