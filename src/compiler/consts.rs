@@ -1,4 +1,4 @@
-use super::node::Type;
+use super::type_::Type;
 
 pub const IDENTITY_OFFSET: usize = 8;
 pub const RETURN: &str = "return";
@@ -11,17 +11,10 @@ pub const BLOCK_EXPECTED: &str = "block begin { expected";
 pub const BRACE_NOT_BALANCED: &str = "brace{} not balanced";
 pub const TYPE_WANTED: &str = "type declaration required";
 pub const IDENTITY_WANTED: &str = "identity wanted";
-pub fn sizeof(t: &Type) -> usize {
-    match t {
-        Type::_Panic => panic!("type Panic found"),
-        Type::Int => 4, // 適切なレジスタを選択できていないので8固定
-        Type::Ptr(_) => 8,
-        Type::LInt => 4, // 数値で中身が不明ならIntとみなす
-        Type::Array(_) => panic!(""),
-    }
-}
+pub const LEFT_VALUE_IS_NOT_ASSIGNABLE: &str = "left value is not assignable";
+pub const NOT_AVAILABLE_FOR_ARRAY_INDEX: &str = "this type is not available for array index";
 pub fn size_directive(t: &Type) -> String {
-    match sizeof(t) {
+    match t.sizeof() {
         4 => "DWORD PTR ",
         8 | _ => "",
     }

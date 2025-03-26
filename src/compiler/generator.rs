@@ -1,9 +1,9 @@
 use std::cmp;
 
-use crate::compiler::consts::{IDENTITY_OFFSET, Register, register, sizeof};
+use crate::compiler::consts::{IDENTITY_OFFSET, Register, register};
 
 use super::{
-    consts::size_directive,
+    consts::{LEFT_VALUE_IS_NOT_ASSIGNABLE, size_directive},
     node::{
         Add, AddSub, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For, If, Lvar,
         Mul, MulDiv, Primary, PrimaryNode, Program, PtrOpe, Relational, Statement, Typed, Unary,
@@ -69,7 +69,10 @@ impl Generator<'_> {
         lines.push(PUSH_VAL.into());
         Ok(lines)
     }
-    fn primary(&mut self, m: &Typed<Primary>) -> GenResult {
+    fn primary(&mut self, m: &Typed<Primary>, is_rvar: bool) -> GenResult {
+        if !is_rvar && !m.0.is_lvar() {
+            return Err(vec![LEFT_VALUE_IS_NOT_ASSIGNABLE.into()]);
+        }
         match &m.0.node.0 {
             PrimaryNode::Num(n) => Ok(vec![format!("push {}", n.0)]),
             PrimaryNode::Expr(e) => self.expr(&(e, m.1.clone())),
@@ -77,14 +80,21 @@ impl Generator<'_> {
             PrimaryNode::Lv(Lvar::Id(i)) => Ok(vec![
                 "mov rax, rbp".into(),
                 format!("sub rax, {}", i.offset),
-                PUSH_REF.into(),
+                if is_rvar {
+                    PUSH_REF.into()
+                } else {
+                    PUSH_VAL.into()
+                },
             ]),
         }
     }
-    fn unary(&mut self, u: &Typed<Unary>) -> GenResult {
+    fn unary(&mut self, u: &Typed<Unary>, is_rvar: bool) -> GenResult {
+        if !is_rvar && !u.0.is_lvar() {
+            return Err(vec![LEFT_VALUE_IS_NOT_ASSIGNABLE.into()]);
+        }
         match &u.0 {
             Unary::Ptr(p) => {
-                let mut pri = self.unary(&p.unary)?;
+                let mut pri = self.unary(&p.unary, is_rvar)?;
                 let last = pri.last();
                 if last.is_none() {
                     return Err(vec![
@@ -105,7 +115,7 @@ impl Generator<'_> {
                 }
             }
             Unary::Var(v) => {
-                let pri = self.primary(&v.prim)?;
+                let pri = self.primary(&v.prim, is_rvar)?;
                 match v.prim.0.ope {
                     None | Some(AddSub::Plus) => {
                         return Ok(pri);
@@ -124,8 +134,11 @@ impl Generator<'_> {
             }
         }
     }
-    fn mul(&mut self, m: &Typed<Mul>) -> GenResult {
-        let first = self.unary(&m.0.first);
+    fn mul(&mut self, m: &Typed<Mul>, is_rvar: bool) -> GenResult {
+        if !is_rvar && !m.0.is_lvar() {
+            return Err(vec![LEFT_VALUE_IS_NOT_ASSIGNABLE.into()]);
+        }
+        let first = self.unary(&m.0.first, is_rvar);
         if first.is_err() {
             return first;
         }
@@ -138,7 +151,7 @@ impl Generator<'_> {
             if ope.is_none() {
                 return Err(vec!["operator expected".into()]);
             }
-            let second = self.unary(u);
+            let second = self.unary(u, is_rvar);
             if second.is_err() {
                 return second;
             }
@@ -158,8 +171,11 @@ impl Generator<'_> {
         }
         return Ok(lines);
     }
-    fn add(&mut self, a: &Typed<Add>) -> GenResult {
-        let first = self.mul(&a.0.first);
+    fn add(&mut self, a: &Typed<Add>, is_rvar: bool) -> GenResult {
+        if !is_rvar && !a.0.is_lvar() {
+            return Err(vec![LEFT_VALUE_IS_NOT_ASSIGNABLE.into()]);
+        }
+        let first = self.mul(&a.0.first, is_rvar);
         if first.is_err() {
             return first;
         }
@@ -171,7 +187,7 @@ impl Generator<'_> {
             if m.0.ope.is_none() {
                 return Err(vec!["operator expected".into()]);
             }
-            let second = self.mul(m);
+            let second = self.mul(m, is_rvar);
             if second.is_err() {
                 return second;
             }
@@ -191,8 +207,11 @@ impl Generator<'_> {
         }
         return Ok(lines);
     }
-    fn relational(&mut self, rel: &Typed<Relational>) -> GenResult {
-        let first = self.add(&rel.0.first);
+    fn relational(&mut self, rel: &Typed<Relational>, is_rvar: bool) -> GenResult {
+        if !is_rvar && !rel.0.is_lvar() {
+            return Err(vec![LEFT_VALUE_IS_NOT_ASSIGNABLE.into()]);
+        }
+        let first = self.add(&rel.0.first, is_rvar);
         if first.is_err() {
             return first;
         }
@@ -204,7 +223,7 @@ impl Generator<'_> {
             if a.0.ope.is_none() {
                 return Err(vec!["operator expected".into()]);
             }
-            let second = self.add(a);
+            let second = self.add(a, is_rvar);
             if second.is_err() {
                 return second;
             }
@@ -212,8 +231,8 @@ impl Generator<'_> {
             lines.push("pop rdi".into());
             lines.push("pop rax".into());
             //LInt型なのが問題？
-            let ax = register(sizeof(&a.1), &Register::_Ax);
-            let di = register(sizeof(&a.1), &Register::Di);
+            let ax = register(a.1.sizeof(), &Register::_Ax);
+            let di = register(a.1.sizeof(), &Register::Di);
             match a.0.ope.as_ref().unwrap() {
                 Compare::Lt => {
                     lines.push(format!("cmp {}, {}", ax, di));
@@ -237,8 +256,11 @@ impl Generator<'_> {
         }
         return Ok(lines);
     }
-    fn equality(&mut self, eq: &Typed<Equality>) -> GenResult {
-        let mut lines = self.relational(&eq.0.first)?;
+    fn equality(&mut self, eq: &Typed<Equality>, is_rvar: bool) -> GenResult {
+        if !is_rvar && !eq.0.is_lvar() {
+            return Err(vec![LEFT_VALUE_IS_NOT_ASSIGNABLE.into()]);
+        }
+        let mut lines = self.relational(&eq.0.first, is_rvar)?;
         if eq.0.relationals.len() == 0 {
             return Ok(lines);
         }
@@ -246,7 +268,7 @@ impl Generator<'_> {
             if rel.0.ope.is_none() {
                 return Err(vec!["operator expected".into()]);
             }
-            let second = self.relational(&rel);
+            let second = self.relational(&rel, is_rvar);
             if second.is_err() {
                 return second;
             }
@@ -254,7 +276,7 @@ impl Generator<'_> {
             lines.append(second.unwrap().as_mut());
             lines.push("pop rdi".into());
             lines.push("pop rax".into());
-            lines.push("cmp rax, rdi".into()); // TODO
+            lines.push("cmp rax, rdi".into());
             match ope {
                 Equals::Equal => lines.push("sete al".into()),
                 Equals::NotEqual => lines.push("setne al".into()),
@@ -265,33 +287,12 @@ impl Generator<'_> {
         return Ok(lines);
     }
 
-    fn lvar(&mut self, e: &Lvar, ref_count: usize) -> GenResult {
-        Ok(if ref_count <= 0 {
-            match e {
-                Lvar::Id(i) => vec![
-                    "mov rax, rbp".into(),
-                    format!("sub rax, {}", i.offset),
-                    "push rax".into(),
-                ],
-            }
-        } else {
-            [
-                self.lvar(e, ref_count - 1)?,
-                vec!["pop rax".into(), PUSH_REF.into()],
-            ]
-            .concat()
-        })
-    }
     fn assign(&mut self, a: &Typed<&Assign>) -> GenResult {
         return match a {
-            (Assign::Rv(r), _) => self.equality(&r.eq),
+            (Assign::Rv(r), _) => self.equality(&r.eq, true),
             (Assign::Asgn(a), _) => {
-                let lvar = a.lvar.0.lvar();
-                if lvar.is_none() {
-                    return Err(vec!["expression canoot be assigned".into()]);
-                }
-                let (lv, _) = lvar.unwrap(); // 見直し
-                let l = self.lvar(lv.0, lv.1)?;
+                let l = self.equality(&a.lvar, false)?;
+
                 let mut r = self.expr(&(&a.rvar.0, a.rvar.1.clone()))?;
                 r.extend(l);
                 r.extend(vec![
@@ -300,7 +301,7 @@ impl Generator<'_> {
                     format!(
                         "mov {}[rax], {}",
                         size_directive(&a.lvar.1),
-                        register(sizeof(&a.lvar.1), &Register::Di)
+                        register(a.lvar.1.sizeof(), &Register::Di)
                     ),
                     "push rdi".into(),
                 ]);
@@ -328,8 +329,8 @@ impl Generator<'_> {
                         format!("sub rax, {}", v.offset),
                         format!(
                             "mov {}[rax], {}",
-                            size_directive(&v._type_),
-                            register(sizeof(&v._type_), &Register::Di)
+                            size_directive(&v.type_),
+                            register(v.type_.sizeof(), &Register::Di)
                         ),
                     ]);
                 }
@@ -464,14 +465,14 @@ impl Generator<'_> {
                         format!("sub rax, {}", a.offset),
                         format!(
                             "mov {}[rax], {}",
-                            size_directive(&a._type_),
-                            register(sizeof(&a._type_), r)
+                            size_directive(&a.type_),
+                            register(a.type_.sizeof(), r)
                         ),
                     ]
                 } else {
                     // 7つ目以降の引数はrbpの前に逆順で積まれている
                     let offset = (i + 1 - FARG_REGS.len()) * IDENTITY_OFFSET;
-                    let sd = size_directive(&a._type_);
+                    let sd = size_directive(&a.type_);
                     vec![
                         "mov rax, rbp".into(),
                         format!("add rax, {}", offset + IDENTITY_OFFSET), // リターンドレスの分で8余分に動かす
@@ -481,7 +482,7 @@ impl Generator<'_> {
                         format!(
                             "mov {}[rax], {}",
                             sd,
-                            register(sizeof(&a._type_), &Register::Di)
+                            register(a.type_.sizeof(), &Register::Di)
                         ),
                     ]
                 }

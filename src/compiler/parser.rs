@@ -2,14 +2,15 @@ use std::collections::HashMap;
 
 use super::{
     consts::{
-        BLOCK_EXPECTED, BRACE_NOT_BALANCED, FOR, IDENTITY_OFFSET, IDENTITY_WANTED, IF, INT, RETURN,
-        TYPE_WANTED, TYPES, WHILE, sizeof,
+        BLOCK_EXPECTED, BRACE_NOT_BALANCED, FOR, IDENTITY_OFFSET, IDENTITY_WANTED, IF, INT,
+        NOT_AVAILABLE_FOR_ARRAY_INDEX, RETURN, TYPE_WANTED, TYPES, WHILE,
     },
     node::{
         Add, AddSub, Asgn, Assign, Block, Compare, Equality, Equals, Expr, ExprAssign, Fcall, Fdef,
         For, Ident, If, Lvar, Mul, MulDiv, Primary, PrimaryNode, Program, PtrOpe, Relational, Rvar,
-        Statement, Stmt, Type, Typed, Unary, UnaryPtr, UnaryVar, VarDef, While,
+        Statement, Stmt, Typed, Unary, UnaryPtr, UnaryVar, VarDef, While,
     },
+    type_::Type,
 };
 const DEBUG: bool = false;
 #[derive(Debug)]
@@ -250,14 +251,14 @@ impl Parser<'_> {
                 ope,
                 node: (
                     PrimaryNode::Lv(Lvar::Id(Ident {
-                        _type_: v._type_.clone(),
+                        _type_: v.type_.clone(),
                         offset: v.offset,
                         // refable, refで剥がして良い回数を持ちたい
                     })),
-                    v._type_.clone(),
+                    v.type_.clone(),
                 ),
             },
-            v._type_.clone(),
+            v.type_.clone(),
         ))
     }
     fn for_test_is_func_available(&self, ident: String) -> bool {
@@ -370,7 +371,9 @@ impl Parser<'_> {
                 break;
             }
             let expr = self.expr()?;
-            // TODO e.1は配列アクセスに使えるかをチェック
+            if !expr.1.can_be_for_array_index() {
+                return Err(self.fail(NOT_AVAILABLE_FOR_ARRAY_INDEX.into()));
+            }
             type_ = Type::Array(Box::new(type_.clone()));
             arrs.push(expr);
             // tをarrayに詰める
@@ -556,8 +559,7 @@ impl Parser<'_> {
     fn assign(&mut self) -> ParseResult<Typed<Assign>> {
         self.dbg("assign".into());
         let (eq, rtype) = self.rvar()?;
-        let lvar = eq.lvar();
-        if lvar.is_none() || self.consume("=").is_none() {
+        if !eq.is_lvar() || self.consume("=").is_none() {
             return Ok((
                 Assign::Rv(Rvar {
                     eq: (eq, rtype.clone()),
@@ -604,12 +606,12 @@ impl Parser<'_> {
                     return Err(p.fail(format!("multi definition for {}", ident)));
                 }
                 let type_ = p.gen_type(type_.clone().unwrap(), ref_count);
-                let memory = sizeof(&type_);
+                let memory = type_.sizeof();
                 p.required_memory += memory;
                 let def = VarDef {
                     ident: ident.clone(),
                     offset: p.required_memory,
-                    _type_: type_,
+                    type_,
                     _ref_count_: ref_count,
                 };
                 p.idents.insert(ident.clone(), def.clone());
@@ -801,7 +803,7 @@ impl Parser<'_> {
 
                     Ok(VarDef {
                         ident: ident,
-                        _type_: type_.unwrap(),
+                        type_: type_.unwrap(),
                         _ref_count_: ref_count,
                         offset: (count + 1) * IDENTITY_OFFSET, // TODO 適切な大きさで確保する
                     })
