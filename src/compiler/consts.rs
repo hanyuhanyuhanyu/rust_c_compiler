@@ -8,7 +8,7 @@ pub const FOR: &str = "for";
 pub const INT: &str = "int";
 pub const TYPES: [&str; 1] = [INT];
 pub const BLOCK_EXPECTED: &str = "block begin { expected";
-pub const BRACKET_NOT_BALANCED: &str = "bracket{} not balanced";
+pub const BRACE_NOT_BALANCED: &str = "brace{} not balanced";
 pub const TYPE_WANTED: &str = "type declaration required";
 pub const IDENTITY_WANTED: &str = "identity wanted";
 pub fn sizeof(t: &Type) -> usize {
@@ -17,6 +17,7 @@ pub fn sizeof(t: &Type) -> usize {
         Type::Int => 4, // 適切なレジスタを選択できていないので8固定
         Type::Ptr(_) => 8,
         Type::LInt => 4, // 数値で中身が不明ならIntとみなす
+        Type::Array(_) => panic!(""),
     }
 }
 pub fn size_directive(t: &Type) -> String {

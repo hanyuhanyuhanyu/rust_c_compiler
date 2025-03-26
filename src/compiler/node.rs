@@ -29,6 +29,7 @@ pub enum Type {
     LInt,
     Int,
     Ptr(Box<Type>),
+    Array(Box<Type>), // TODO sizeいる
 }
 impl Type {
     pub fn when_addsub(&self, register: String) -> Vec<String> {
@@ -212,6 +213,7 @@ pub struct UnaryPtr {
 pub struct UnaryVar {
     pub ope: Option<MulDiv>,
     pub prim: (Primary, Type),
+    pub _arrs: Vec<Typed<Expr>>,
 }
 #[derive(Debug)]
 pub enum Unary {

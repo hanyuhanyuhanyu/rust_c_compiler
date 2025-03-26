@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use super::{
     consts::{
-        BLOCK_EXPECTED, BRACKET_NOT_BALANCED, FOR, IDENTITY_OFFSET, IDENTITY_WANTED, IF, INT,
-        RETURN, TYPE_WANTED, TYPES, WHILE, sizeof,
+        BLOCK_EXPECTED, BRACE_NOT_BALANCED, FOR, IDENTITY_OFFSET, IDENTITY_WANTED, IF, INT, RETURN,
+        TYPE_WANTED, TYPES, WHILE, sizeof,
     },
     node::{
         Add, AddSub, Asgn, Assign, Block, Compare, Equality, Equals, Expr, ExprAssign, Fcall, Fdef,
@@ -349,10 +349,42 @@ impl Parser<'_> {
         } else {
             None
         };
-        let prim = self.primary(addsub)?;
-        let t = prim.1.clone();
-        Ok((Unary::Var(UnaryVar { ope, prim: prim }), t))
+        let mut prim = self.primary(addsub)?;
+        let (arrs, type_) = self.array_access(prim.1.clone())?;
+        prim.1 = type_.clone();
+        Ok((
+            Unary::Var(UnaryVar {
+                ope,
+                prim,
+                _arrs: arrs,
+            }),
+            type_.clone(),
+        ))
     }
+    fn array_access(&mut self, t: Type) -> ParseResult<(Vec<Typed<Expr>>, Type)> {
+        self.dbg("array_access".into());
+        let mut type_ = t.clone();
+        let mut arrs = vec![];
+        loop {
+            if self.consume("[").is_none() || self.empty() {
+                break;
+            }
+            let expr = self.expr()?;
+            // TODO e.1は配列アクセスに使えるかをチェック
+            type_ = Type::Array(Box::new(type_.clone()));
+            arrs.push(expr);
+            // tをarrayに詰める
+            // Arrayに詰まったないようをどう解釈するかはlvarかrvarかで変わるしoffsetは変数宣言時に変わる
+            // そのあたりはgeneratorに頑張ってもらおう
+            if self.consume("]").is_none() {
+                return Err(self.fail("bracket unbalanced".into()));
+            }
+        }
+
+        self.dbg("array_access".into());
+        Ok((arrs, type_))
+    }
+
     fn mul(&mut self, ope: Option<AddSub>) -> ParseResult<Typed<Mul>> {
         self.dbg("mul".into());
         // 一般化したい
@@ -678,7 +710,7 @@ impl Parser<'_> {
             stmts.push(self.stmt()?);
         }
         if self.consume("}").is_none() {
-            return Err(self.fail(BRACKET_NOT_BALANCED.into()));
+            return Err(self.fail(BRACE_NOT_BALANCED.into()));
         }
         Ok(Block { stmts: stmts })
     }
