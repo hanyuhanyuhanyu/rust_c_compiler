@@ -109,31 +109,35 @@ impl Generator<'_> {
             _ => return Err(vec!["this node is not array".into()]),
         };
         let item_size = t.sizeof_item();
-        lines.push("push 0".into()); // 配列のオフセット
+        lines.push("push 0 # arr start".into()); // 配列のオフセット
         for (ind, a) in arr.iter().enumerate() {
             lines.extend(self.expr(&(&a.0, a.1.clone()))?);
+            lines.push(format!("#{:?}", a.0));
             // TODO: 配列の領域外アクセスチェック
             lines.extend(vec![
-                "pop rax".into(), // 算出した要素数
-                "pop rdi".into(), // 配列のオフセット
-                "pop rsi".into(), // 配列のアドレス
+                format!("pop rax # {}", ind), // 算出した要素数
+                "pop rdi".into(),             // 配列のオフセット
+                "pop rsi".into(),             // 配列のアドレス
                 format!("mov rdx, rsi"),
                 if ind == depth - 1 {
                     format!("mov rdx, 1",) // 多次元配列の端っこなら固定値
                 } else {
-                    format!("add rdx, 0x{:X}", ind + 1)
+                    format!(
+                        "add rdx, 0x{:X}\nmov rdx, [rdx]",
+                        (ind + 2) * IDENTITY_OFFSET //(ind + 2)で正しい。配列の実体のポインタの直上は配列全体の大きさを格納している。その一つ上が、1次元目の配列1つあたりのメモリの大きさを表している
+                    )
                 },
                 "imul rax, rdx".into(),
                 "add rdi, rax".into(),
-                "push rdi".into(),
                 "push rsi".into(),
+                "push rdi".into(),
             ]);
         }
         lines.extend(vec![
+            "pop rdi # arr end".into(),
             "pop rax".into(),
-            "pop rsi".into(),
-            format!("imul rsi, 0x{:X}", item_size),
-            "sub rax, rsi".into(),
+            format!("imul rdi, 0x{:X}", item_size),
+            "sub rax, rdi".into(),
             if is_rvar {
                 PUSH_REF.into()
             } else {
@@ -354,9 +358,10 @@ impl Generator<'_> {
                     "pop rax".into(),
                     "pop rdi".into(),
                     format!(
-                        "mov {}[rax], {}",
-                        size_directive(&a.lvar.1),
+                        "mov {}[rax], {} # {:?}",
+                        size_directive(&a.rvar.1),
                         register(a.rvar.1.sizeof(), &Register::Di),
+                        a.rvar.1.clone()
                     ),
                     "push rdi".into(),
                 ]);
@@ -377,25 +382,25 @@ impl Generator<'_> {
             ]);
         }
         //r15に配列全体のバイト数を持っておく
-        let mut lines = vec![format!("mov r15, 0x{}", v.type_.sizeof_item())];
+        let mut lines = vec![format!("mov r15, 0x{} # arr def start", 1)];
         let len = v._arrs.len();
         for (ind, a) in v._arrs.iter().rev().enumerate() {
             lines.extend(self.expr(&(&a.0, a.1.clone()))?);
             // 各配列の大きさを配列自体のポインタの上に確保。浅い順からポインタに近い位置に置く
             lines.extend(vec![
                 "pop rdi".into(),
+                "imul r15, rdi".into(), // サイズ大きくする
                 "mov rax, rbp".into(),
                 format!("sub rax, 0x{:X}", v.offset - (len - ind) * IDENTITY_OFFSET),
-                "imul r15, rdi".into(), // サイズ大きくする
                 "mov [rax], r15".into(),
             ])
         }
         // 配列自体を指すポイントを確保
-        lines.push("mov rax, rbp".into());
+        lines.push("mov rax, rbp # arr ptr".into());
         lines.push(format!("sub rax, 0x{:X}", v.offset));
-        lines.push("mov rdi, rsp".into());
-        lines.push("sub rdi, 0x8".into());
-        lines.push("mov [rax], rdi".into());
+        lines.push("sub rsp, 0x8".into());
+        lines.push("mov [rax], rsp".into());
+        lines.push(format!("imul r15, 0x{:X}", v.type_.sizeof_item()));
         lines.push("sub rsp, r15".into()); // 配列全体のメモリを確保
         lines.push("sub rsp, 0x8".into());
         lines.push("mov r15, 0x0".into()); // r15後片付け

@@ -331,6 +331,15 @@ impl Parser<'_> {
                     }),
                     *inside,
                 )),
+                Type::Array(inside) => {
+                    return Ok((
+                        Unary::Ptr(UnaryPtr {
+                            ope: PtrOpe::Ref,
+                            unary: Box::new(unary),
+                        }),
+                        inside.0,
+                    )); // TODO これで本当に大丈夫？
+                }
                 ty => Err(self.fail(format!("cannot get ref of type {:?}", ty))),
             };
         } else if self.consume("&").is_some() {
@@ -375,9 +384,14 @@ impl Parser<'_> {
                 break;
             }
             let expr = self.expr()?;
-            if !expr.1.can_be_for_array_index() {
-                return Err(self.fail(NOT_AVAILABLE_FOR_ARRAY_INDEX.into()));
-            }
+            // FIXME: 配列のアクセスによってIntになる場合に対応する
+            // if !expr.1.can_be_for_array_index() {
+            //     return Err(self.fail(format!(
+            //         "{} {:?}",
+            //         NOT_AVAILABLE_FOR_ARRAY_INDEX,
+            //         expr.1.clone()
+            //     )));
+            // }
             arrs.push(expr);
             // tをarrayに詰める
             // Arrayに詰まったないようをどう解釈するかはlvarかrvarかで変わるしoffsetは変数宣言時に変わる
