@@ -18,7 +18,7 @@ assert() {
     return
   fi
   file_name="output_$cnt"
-  cargo run -q -- "$input" > $tmp/$file_name.s
+  RUSTFLAGS="-Awarnings" cargo run -q -- "$input" > $tmp/$file_name.s
   cc -z noexecstack -o $tmp/$file_name $utils $tmp/$file_name.s
   actual="$($tmp/$file_name)"
   if [ "$actual" = "$expect" ]; then

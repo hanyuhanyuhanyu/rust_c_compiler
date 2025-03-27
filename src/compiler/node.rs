@@ -1,34 +1,34 @@
 use super::type_::Type;
 
 pub type Typed<T> = (T, Type);
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AddSub {
     Plus,
     Minus,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MulDiv {
     Multi,
     Divide,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Compare {
     Lt,
     Lte,
     Gt,
     Gte,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Equals {
     Equal,
     NotEqual,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Fcall {
     pub ident: String,
     pub args: Vec<Typed<Expr>>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Fdef {
     // pub type_: Type,
     pub ident: String,
@@ -36,40 +36,40 @@ pub struct Fdef {
     pub args: Vec<VarDef>,
     pub required_memory: usize,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Program {
     pub fdefs: Vec<Fdef>,
     // pub stmt: Vec<Statement>,
     // pub required_memory: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct If {
     pub cond: (Expr, Type),
     pub stmt: Box<Statement>,
     pub else_: Option<Box<Statement>>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct For {
     pub init: Option<Typed<Expr>>,
     pub cond: Option<Typed<Expr>>,
     pub step: Option<Typed<Expr>>,
     pub stmt: Box<Statement>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct While {
     pub cond: Typed<Expr>,
     pub stmt: Box<Statement>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Stmt {
     pub expr: Typed<Expr>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub stmts: Vec<Statement>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Statement {
     If(If),
     For(For),
@@ -78,7 +78,7 @@ pub enum Statement {
     MStmt(Block),
     Nothing,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Asgn(ExprAssign),
     VarAsgn(Vec<VarDef>, Option<Assign>),
@@ -91,16 +91,16 @@ impl Expr {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExprAssign {
     pub assign: Assign,
     pub ret: bool,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Rvar {
     pub eq: Typed<Equality>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Asgn {
     pub lvar: Typed<Equality>,
     pub rvar: Box<Typed<Expr>>,
@@ -111,9 +111,10 @@ pub struct VarDef {
     pub type_: Type,
     pub _ref_count_: usize,
     pub offset: usize,
+    pub _arrs: Vec<Typed<Expr>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Assign {
     Rv(Rvar),
     Asgn(Asgn),
@@ -126,7 +127,7 @@ impl Assign {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Equality {
     pub first: Typed<Relational>,
     pub relationals: Vec<Typed<Relational>>,
@@ -136,7 +137,7 @@ impl Equality {
         self.first.0.is_lvar() && self.relationals.len() == 0
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Relational {
     pub first: (Add, Type),
     pub ope: Option<Equals>,
@@ -150,7 +151,7 @@ impl Relational {
         self.first.0.is_lvar()
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Add {
     pub first: (Mul, Type),
     pub ope: Option<Compare>,
@@ -164,7 +165,7 @@ impl Add {
         self.first.0.is_lvar()
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Mul {
     pub first: (Unary, Type),
     pub ope: Option<AddSub>,
@@ -178,23 +179,23 @@ impl Mul {
         self.first.0.is_lvar()
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PtrOpe {
     Ref,
     Deref,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UnaryPtr {
     pub ope: PtrOpe,
     pub unary: Box<(Unary, Type)>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UnaryVar {
     pub ope: Option<MulDiv>,
     pub prim: (Primary, Type),
     pub _arrs: Vec<Typed<Expr>>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Unary {
     Ptr(UnaryPtr),
     Var(UnaryVar),
@@ -215,27 +216,28 @@ impl Unary {
             Unary::Var(p) => &p.ope,
         }
     }
+    pub fn ident(&self) -> Option<&String> {
+        match self {
+            Unary::Var(p) => p.prim.0.ident(),
+            Unary::Ptr(p) => p.unary.0.ident(),
+        }
+    }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Lvar {
     Id(Ident),
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PrimaryNode {
     Num((String, Type)),
     Lv(Lvar),
     Expr(Box<Expr>),
     Fcall(Fcall),
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Primary {
     pub ope: Option<AddSub>,
     pub node: (PrimaryNode, Type),
-}
-#[derive(Debug)]
-pub struct Ident {
-    pub _type_: Type,
-    pub offset: usize,
 }
 impl Primary {
     pub fn is_lvar(&self) -> bool {
@@ -247,4 +249,16 @@ impl Primary {
             _ => false,
         }
     }
+    pub fn ident(&self) -> Option<&String> {
+        match &self.node.0 {
+            PrimaryNode::Lv(Lvar::Id(i)) => Some(&i.name),
+            _ => None,
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub struct Ident {
+    pub name: String,
+    pub _type_: Type,
+    pub offset: usize,
 }

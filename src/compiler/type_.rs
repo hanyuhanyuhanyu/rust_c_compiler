@@ -4,13 +4,16 @@ pub enum Type {
     LInt,
     Int,
     Ptr(Box<Type>),
-    Array(Box<Type>), // TODO sizeいる
+    Array(Box<(Type, usize)>), // usizeは深さ
 }
 impl Type {
     pub fn when_addsub(&self, register: String) -> Vec<String> {
         match &self {
             Type::LInt | Type::Int => vec![],
-            Type::Ptr(_) => vec![format!("imul {}, {}", register, self.sizeof())],
+            Type::Array(_) => {
+                vec![format!("imul {}, {}", register, self.sizeof_item())]
+            }
+            Type::Ptr(t) => vec![format!("imul {}, {}", register, t.sizeof_item())],
             _ => vec![],
         }
     }
@@ -20,7 +23,14 @@ impl Type {
             Type::Int => 4, // 適切なレジスタを選択できていないので8固定
             Type::Ptr(_) => 8,
             Type::LInt => 4, // 数値で中身が不明ならIntとみなす
-            Type::Array(_) => panic!(""),
+            Type::Array(_) => 8,
+        }
+    }
+    pub fn sizeof_item(&self) -> usize {
+        match self {
+            Type::Array(t) => t.0.sizeof_item(),
+            Type::Ptr(t) => t.sizeof(), // TODO 正しい？
+            t => t.sizeof(),
         }
     }
     pub fn can_be_for_array_index(&self) -> bool {

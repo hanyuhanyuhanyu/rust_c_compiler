@@ -1,4 +1,4 @@
-use std::cmp;
+use std::{cmp, collections::HashMap};
 
 use crate::compiler::consts::{IDENTITY_OFFSET, Register, register};
 
@@ -7,8 +7,9 @@ use super::{
     node::{
         Add, AddSub, Assign, Block, Compare, Equality, Equals, Expr, Fcall, Fdef, For, If, Lvar,
         Mul, MulDiv, Primary, PrimaryNode, Program, PtrOpe, Relational, Statement, Typed, Unary,
-        While,
+        VarDef, While,
     },
+    type_::Type,
 };
 const PUSH_REF: &str = "push [rax]";
 const PUSH_VAL: &str = "push rax";
@@ -37,6 +38,7 @@ fn concat_multi(results: &[GenResult]) -> GenResult {
 struct Generator<'a> {
     p: &'a Program,
     jump_count: usize,
+    _array_size: HashMap<(&'a String, usize), Vec<usize>>,
 }
 const FARG_REGS: [Register; 6] = [
     Register::Di,
@@ -69,24 +71,77 @@ impl Generator<'_> {
         lines.push(PUSH_VAL.into());
         Ok(lines)
     }
-    fn primary(&mut self, m: &Typed<Primary>, is_rvar: bool) -> GenResult {
+    fn primary(&mut self, m: &Typed<Primary>, arr: &Vec<Typed<Expr>>, is_rvar: bool) -> GenResult {
         if !is_rvar && !m.0.is_lvar() {
             return Err(vec![LEFT_VALUE_IS_NOT_ASSIGNABLE.into()]);
         }
-        match &m.0.node.0 {
+        let mut lines = match &m.0.node.0 {
             PrimaryNode::Num(n) => Ok(vec![format!("push {}", n.0)]),
-            PrimaryNode::Expr(e) => self.expr(&(e, m.1.clone())),
+            PrimaryNode::Expr(e) => self.expr(&(e, m.1.clone())), // TODO これだとこれに直接配列アクセスしようとしたら困りそう。これの戻り値がLvであるとわからないと難しい。右式の変数がアドレスからその内部の値に姿を変えるのは代入演算子('=')によるものだと解釈するほうが良いのでは？　ひとまずExprに対する配列アクセスはサポートしない
             PrimaryNode::Fcall(f) => self.fcall(f),
             PrimaryNode::Lv(Lvar::Id(i)) => Ok(vec![
                 "mov rax, rbp".into(),
                 format!("sub rax, {}", i.offset),
-                if is_rvar {
+                if is_rvar && arr.len() == 0 {
                     PUSH_REF.into()
                 } else {
                     PUSH_VAL.into()
                 },
             ]),
+        }?;
+        if arr.len() == 0 {
+            return Ok(lines);
         }
+        // TODO 配列アクセスしてよいやつかどうかチェック
+        let (t, depth) = match &m.1 {
+            Type::Array(b) => {
+                let t = &b.0;
+                let depth = b.1;
+                if depth < arr.len() {
+                    return Err(vec![format!(
+                        "this array has {} dimension, cannot access {} dimension",
+                        depth,
+                        arr.len()
+                    )]);
+                }
+                (t, depth)
+            }
+            _ => return Err(vec!["this node is not array".into()]),
+        };
+        let item_size = t.sizeof_item();
+        lines.push("push 0".into()); // 配列のオフセット
+        for (ind, a) in arr.iter().enumerate() {
+            lines.extend(self.expr(&(&a.0, a.1.clone()))?);
+            // TODO: 配列の領域外アクセスチェック
+            lines.extend(vec![
+                "pop rax".into(), // 算出した要素数
+                "pop rdi".into(), // 配列のオフセット
+                "pop rsi".into(), // 配列のアドレス
+                format!("mov rdx, rsi"),
+                if ind == depth - 1 {
+                    format!("mov rdx, 1",) // 多次元配列の端っこなら固定値
+                } else {
+                    format!("add rdx, 0x{:X}", ind + 1)
+                },
+                "imul rax, rdx".into(),
+                "add rdi, rax".into(),
+                "push rdi".into(),
+                "push rsi".into(),
+            ]);
+        }
+        lines.extend(vec![
+            "pop rax".into(),
+            "pop rsi".into(),
+            format!("imul rsi, 0x{:X}", item_size),
+            "sub rax, rsi".into(),
+            if is_rvar {
+                PUSH_REF.into()
+            } else {
+                PUSH_VAL.into()
+            },
+        ]);
+
+        Ok(lines)
     }
     fn unary(&mut self, u: &Typed<Unary>, is_rvar: bool) -> GenResult {
         if !is_rvar && !u.0.is_lvar() {
@@ -115,7 +170,7 @@ impl Generator<'_> {
                 }
             }
             Unary::Var(v) => {
-                let pri = self.primary(&v.prim, is_rvar)?;
+                let pri = self.primary(&v.prim, &v._arrs, is_rvar)?;
                 match v.prim.0.ope {
                     None | Some(AddSub::Plus) => {
                         return Ok(pri);
@@ -301,7 +356,7 @@ impl Generator<'_> {
                     format!(
                         "mov {}[rax], {}",
                         size_directive(&a.lvar.1),
-                        register(a.lvar.1.sizeof(), &Register::Di)
+                        register(a.rvar.1.sizeof(), &Register::Di),
                     ),
                     "push rdi".into(),
                 ]);
@@ -309,30 +364,59 @@ impl Generator<'_> {
             }
         };
     }
+    fn vardef(&mut self, v: &VarDef) -> GenResult {
+        if v._arrs.len() == 0 {
+            return Ok(vec![
+                "mov rax, rbp".into(),
+                format!("sub rax, {}", v.offset),
+                format!(
+                    "mov {}[rax], {}",
+                    size_directive(&v.type_),
+                    register(v.type_.sizeof(), &Register::Di)
+                ),
+            ]);
+        }
+        //r15に配列全体のバイト数を持っておく
+        let mut lines = vec![format!("mov r15, 0x{}", v.type_.sizeof_item())];
+        let len = v._arrs.len();
+        for (ind, a) in v._arrs.iter().rev().enumerate() {
+            lines.extend(self.expr(&(&a.0, a.1.clone()))?);
+            // 各配列の大きさを配列自体のポインタの上に確保。浅い順からポインタに近い位置に置く
+            lines.extend(vec![
+                "pop rdi".into(),
+                "mov rax, rbp".into(),
+                format!("sub rax, 0x{:X}", v.offset - (len - ind) * IDENTITY_OFFSET),
+                "imul r15, rdi".into(), // サイズ大きくする
+                "mov [rax], r15".into(),
+            ])
+        }
+        // 配列自体を指すポイントを確保
+        lines.push("mov rax, rbp".into());
+        lines.push(format!("sub rax, 0x{:X}", v.offset));
+        lines.push("mov rdi, rsp".into());
+        lines.push("sub rdi, 0x8".into());
+        lines.push("mov [rax], rdi".into());
+        lines.push("sub rsp, r15".into()); // 配列全体のメモリを確保
+        lines.push("sub rsp, 0x8".into());
+        lines.push("mov r15, 0x0".into()); // r15後片付け
+        Ok(lines)
+    }
     fn expr(&mut self, e: &Typed<&Expr>) -> GenResult {
         match e {
             (Expr::Asgn(ea), _) => self.assign(&(&ea.assign, e.1.clone())),
             (Expr::VarAsgn(def, assign), _) => {
                 let mut l = vec![];
+                //0で初期化
                 if assign.is_none() {
                     l.push("push 0".into());
-                }
-                if assign.is_some() {
+                } else {
                     l.extend(
                         self.assign(&(assign.as_ref().unwrap(), assign.as_ref().unwrap().type_()))?,
                     );
                 };
                 l.push("pop rdi".into());
                 for v in def.iter() {
-                    l.extend(vec![
-                        "mov rax, rbp".into(),
-                        format!("sub rax, {}", v.offset),
-                        format!(
-                            "mov {}[rax], {}",
-                            size_directive(&v.type_),
-                            register(v.type_.sizeof(), &Register::Di)
-                        ),
-                    ]);
+                    l.extend(self.vardef(v)?);
                 }
                 Ok(l)
             }
@@ -525,6 +609,7 @@ pub fn generate(p: &Program) -> GenResult {
     Generator {
         p: p,
         jump_count: 0,
+        _array_size: HashMap::new(),
     }
     .generate()
 }

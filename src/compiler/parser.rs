@@ -251,6 +251,7 @@ impl Parser<'_> {
                 ope,
                 node: (
                     PrimaryNode::Lv(Lvar::Id(Ident {
+                        name: v.ident.clone(),
                         _type_: v.type_.clone(),
                         offset: v.offset,
                         // refable, refで剥がして良い回数を持ちたい
@@ -350,21 +351,24 @@ impl Parser<'_> {
         } else {
             None
         };
-        let mut prim = self.primary(addsub)?;
-        let (arrs, type_) = self.array_access(prim.1.clone())?;
-        prim.1 = type_.clone();
+        let prim = self.primary(addsub)?;
+        let arrs = self.array_access()?;
+        let type_ = if arrs.len() > 0 {
+            Type::Array(Box::new((prim.1.clone(), arrs.len())))
+        } else {
+            prim.1.clone()
+        };
         Ok((
             Unary::Var(UnaryVar {
                 ope,
                 prim,
                 _arrs: arrs,
             }),
-            type_.clone(),
+            type_,
         ))
     }
-    fn array_access(&mut self, t: Type) -> ParseResult<(Vec<Typed<Expr>>, Type)> {
+    fn array_access(&mut self) -> ParseResult<Vec<Typed<Expr>>> {
         self.dbg("array_access".into());
-        let mut type_ = t.clone();
         let mut arrs = vec![];
         loop {
             if self.consume("[").is_none() || self.empty() {
@@ -374,7 +378,6 @@ impl Parser<'_> {
             if !expr.1.can_be_for_array_index() {
                 return Err(self.fail(NOT_AVAILABLE_FOR_ARRAY_INDEX.into()));
             }
-            type_ = Type::Array(Box::new(type_.clone()));
             arrs.push(expr);
             // tをarrayに詰める
             // Arrayに詰まったないようをどう解釈するかはlvarかrvarかで変わるしoffsetは変数宣言時に変わる
@@ -385,7 +388,7 @@ impl Parser<'_> {
         }
 
         self.dbg("array_access".into());
-        Ok((arrs, type_))
+        Ok(arrs)
     }
 
     fn mul(&mut self, ope: Option<AddSub>) -> ParseResult<Typed<Mul>> {
@@ -605,14 +608,26 @@ impl Parser<'_> {
                 if p.idents.get(&ident).is_some() {
                     return Err(p.fail(format!("multi definition for {}", ident)));
                 }
-                let type_ = p.gen_type(type_.clone().unwrap(), ref_count);
-                let memory = type_.sizeof();
-                p.required_memory += memory;
+                let mut type_ = p.gen_type(type_.clone().unwrap(), ref_count);
+                let _arrs = p.array_access()?;
+                type_ = if _arrs.len() > 0 {
+                    Type::Array(Box::new((type_.clone(), _arrs.len())))
+                } else {
+                    type_.clone()
+                };
+                // n次元配列の各次元の要素数は配列そのものへのポインタの上に格納する
+                p.required_memory += if _arrs.len() > 0 {
+                    // 配列長の保持+配列の実体へのポインタ
+                    (_arrs.len() + 1) * IDENTITY_OFFSET
+                } else {
+                    type_.sizeof()
+                };
                 let def = VarDef {
                     ident: ident.clone(),
                     offset: p.required_memory,
                     type_,
                     _ref_count_: ref_count,
+                    _arrs,
                 };
                 p.idents.insert(ident.clone(), def.clone());
                 Ok(def)
@@ -806,6 +821,7 @@ impl Parser<'_> {
                         type_: type_.unwrap(),
                         _ref_count_: ref_count,
                         offset: (count + 1) * IDENTITY_OFFSET, // TODO 適切な大きさで確保する
+                        _arrs: vec![], // 関数の引数には配列アクセスっぽい記載はないはず
                     })
                 },
             )
