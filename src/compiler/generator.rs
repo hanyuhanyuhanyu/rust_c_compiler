@@ -48,6 +48,18 @@ const FARG_REGS: [Register; 6] = [
     Register::_8,
     Register::_9,
 ];
+fn push_ref(t: &Type) -> Vec<String> {
+    vec![
+        format!(
+            "mov {}, {}[{}] # {:?}",
+            register(t.sizeof(), &Register::_Ax),
+            size_directive(&t),
+            register(8, &Register::_Ax),
+            t
+        ),
+        PUSH_VAL.into(),
+    ]
+}
 impl Generator<'_> {
     fn jump_label(&mut self) -> String {
         let label = self.jump_count.to_string();
@@ -79,15 +91,15 @@ impl Generator<'_> {
             PrimaryNode::Num(n) => Ok(vec![format!("push {}", n.0)]),
             PrimaryNode::Expr(e) => self.expr(&(e, m.1.clone())), // TODO これだとこれに直接配列アクセスしようとしたら困りそう。これの戻り値がLvであるとわからないと難しい。右式の変数がアドレスからその内部の値に姿を変えるのは代入演算子('=')によるものだと解釈するほうが良いのでは？　ひとまずExprに対する配列アクセスはサポートしない
             PrimaryNode::Fcall(f) => self.fcall(f),
-            PrimaryNode::Lv(Lvar::Id(i)) => Ok(vec![
-                "mov rax, rbp".into(),
-                format!("sub rax, {}", i.offset),
+            PrimaryNode::Lv(Lvar::Id(i)) => {
+                let mut lines = vec!["mov rax, rbp".into(), format!("sub rax, {}", i.offset)];
                 if is_rvar && arr.len() == 0 {
-                    PUSH_REF.into()
+                    lines.extend(push_ref(&i._type_));
                 } else {
-                    PUSH_VAL.into()
-                },
-            ]),
+                    lines.push(PUSH_VAL.into());
+                };
+                Ok(lines)
+            }
         }?;
         if arr.len() == 0 {
             return Ok(lines);
@@ -398,7 +410,7 @@ impl Generator<'_> {
         // 配列自体を指すポイントを確保
         lines.push("mov rax, rbp # arr ptr".into());
         lines.push(format!("sub rax, 0x{:X}", v.offset));
-        lines.push("sub rsp, 0x8".into());
+        lines.push("sub rsp, 0x8".into()); // TODO 多分rsp無意味に押し下げすぎ。
         lines.push("mov [rax], rsp".into());
         lines.push(format!("imul r15, 0x{:X}", v.type_.sizeof_item()));
         lines.push("sub rsp, r15".into()); // 配列全体のメモリを確保
