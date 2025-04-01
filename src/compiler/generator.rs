@@ -57,7 +57,7 @@ fn push_ref(t: &Type) -> Vec<String> {
             register(8, &Register::_Ax),
             t
         ),
-        PUSH_VAL.into(),
+        format!("{} #push_ref", PUSH_VAL),
     ]
 }
 impl Generator<'_> {
@@ -175,7 +175,12 @@ impl Generator<'_> {
                 match p.ope {
                     PtrOpe::Ref => Ok([pri, vec!["pop rax".into(), PUSH_REF.into()]].concat()),
                     PtrOpe::Deref => {
-                        return if last.unwrap().eq(PUSH_REF) {
+                        return if last.unwrap().contains(PUSH_REF) {
+                            let len = pri.len() - 1;
+                            pri[len] = PUSH_VAL.into();
+                            Ok(pri)
+                        } else if last.unwrap().contains("#push_ref") {
+                            pri.pop();
                             let len = pri.len() - 1;
                             pri[len] = PUSH_VAL.into();
                             Ok(pri)
